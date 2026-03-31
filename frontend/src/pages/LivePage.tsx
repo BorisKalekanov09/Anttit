@@ -64,13 +64,16 @@ export default function LivePage() {
     toast.success('Snapshot exported!')
   }
 
+  const [isStopping, setIsStopping] = useState(false)
+
   const handleStop = async () => {
+    setIsStopping(true)
     await control('stop')
     toast('Simulation stopped — generating analysis...', { icon: '🔬' })
   }
 
   // Show analysis view after stop
-  if (!state.running && state.analysis) {
+  if (isStopping || state.analysis) {
     return <AnalysisView
       analysis={state.analysis}
       history={state.history}
