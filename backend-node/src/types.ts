@@ -1,0 +1,190 @@
+/**
+ * Shared types for TuesFest2026 Node.js Backend
+ * Mirrors Python backend types + new feature fields from plan
+ */
+
+// ── Agent Role Types (Feature 5) ──────────────────────────────────────────
+
+export type AgentRole = 'default' | 'influencer' | 'skeptic' | 'bot' | 'follower';
+
+export interface RoleMix {
+  influencer: number;
+  skeptic: number;
+  bot: number;
+  follower: number;
+  default: number;
+}
+
+// ── Personality Types ─────────────────────────────────────────────────────
+
+export interface PersonalityDef {
+  name: string;
+  description: string;
+  credulity: number;       // 0-100
+  influence: number;       // 0-100
+  stubbornness: number;    // 0-100
+  activity: number;        // 0-100
+  suggested_percentage: number;
+  color: string;
+}
+
+// ── Simulation Configuration ──────────────────────────────────────────────
+
+export interface SimulationConfig {
+  simId: string;
+  theme: string;
+  agentCount: number;
+  topology: 'small_world' | 'scale_free' | 'random' | 'grid';
+  tickRate: number;
+  personalities: PersonalityDef[];
+  modelName: string;
+  aiAgentsPerTick: number;
+  seedText?: string;
+  roleMix?: RoleMix;
+  initial_state_distribution?: Record<string, number>;
+  seed_fraction?: number;
+}
+
+// ── Agent Memory Types (Feature 2: Enhanced Memory) ───────────────────────
+
+export interface EpisodicEntry {
+  tick: number;
+  event: string;           // "changed from X to Y because..."
+  influence: string;       // which agent triggered this
+  impact: 'high' | 'low';
+}
+
+// ── Theme Definition ──────────────────────────────────────────────────────
+
+export interface ThemeDef {
+  key: string;
+  name: string;
+  description: string;
+  states: string[];
+  difficulty: 'simple' | 'medium' | 'complex';
+  emoji: string;
+  state_colors: Record<string, string>;
+}
+
+// ── WebSocket Message Types ───────────────────────────────────────────────
+
+export interface InitMessage {
+  type: 'init';
+  positions: Record<string, [number, number]>;
+  edges: [number, number][];
+  states: string[];
+  state_colors: Record<string, string>;
+  personalities: { name: string; color: string }[];
+  theme: string;
+}
+
+export interface TickEvent {
+  tick: number;
+  agent_id: string;
+  personality: string;
+  from_state: string;
+  to_state: string;
+  reason: string;
+  ai: boolean;
+}
+
+export interface TickMessage {
+  type: 'tick';
+  tick: number;
+  state_counts: Record<string, number>;
+  breakdown: Record<string, Record<string, number>>;
+  events: TickEvent[];
+  node_states: Record<string, string>;
+  total_agents: number;
+}
+
+// ── Analysis Report (Feature 1: AI Report Layer) ──────────────────────────
+
+export interface AnalysisReport {
+  summary: string;                          // 2-3 sentence executive summary
+  timeline: string;                         // key turning points (tick-referenced)
+  personalities: Record<string, string>;    // per-personality behavioral analysis
+  realWorldParallel: string;                // metaphor/analogy to real events
+  recommendations: string[];                // 3-5 actionable insights
+}
+
+export interface AnalysisMessage {
+  type: 'analysis';
+  report: AnalysisReport;
+  // Legacy text field for backward compatibility
+  text?: string;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage;
+
+// ── API Request/Response Types ────────────────────────────────────────────
+
+export interface LaunchRequest {
+  theme: string;
+  agent_count: number;
+  topology: string;
+  tick_rate: number;
+  personalities: PersonalityDef[];
+  seedText?: string;
+  roleMix?: RoleMix;
+  modelName?: string;
+}
+
+export interface GeneratePersonalitiesRequest {
+  theme: string;
+  description: string;
+}
+
+export interface TraitTooltipRequest {
+  trait: string;
+  theme: string;
+  value: number;
+}
+
+export interface InjectEventRequest {
+  event_type: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ControlRequest {
+  action: 'pause' | 'resume' | 'stop' | 'set_speed';
+  tick_rate?: number;
+}
+
+// ── Seed Input Types (Feature 3) ──────────────────────────────────────────
+
+export interface SeedRequest {
+  text: string;
+  theme: string;
+}
+
+export interface SeedResponse {
+  suggestedConfig: Partial<SimulationConfig>;
+  suggestedPersonalities: PersonalityDef[];
+  seedRationale: string;
+}
+
+// ── What-If Types (Feature 4) ─────────────────────────────────────────────
+
+export interface WhatIfRequest {
+  description: string;
+}
+
+export interface WhatIfResponse {
+  eventType: string;
+  payload: Record<string, unknown>;
+  preview: string;
+}
+
+// ── Gemini Decision Types ─────────────────────────────────────────────────
+
+export interface GeminiDecision {
+  action: 'stay' | 'change';
+  new_state: string;
+  reason: string;
+  emotional_shift?: number;  // Feature 2: Enhanced Memory
+}
+
+// ── Decision Type ─────────────────────────────────────────────────────────
+
+export type Decision = [string, string]; // [new_state, reason]

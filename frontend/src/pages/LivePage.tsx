@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useSimulation } from '../hooks/useSimulation'
@@ -40,6 +40,13 @@ export default function LivePage() {
   const navigate = useNavigate()
   const { state, control, inject, snapshot } = useSimulation(simId)
   const [speed, setSpeed] = useState(0.4)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [whatIfInput, setWhatIfInput] = useState('')
+  const [whatIfLoading, setWhatIfLoading] = useState(false)
+  const [showWhatIfConfirm, setShowWhatIfConfirm] = useState(false)
+  const [pendingWhatIf, setPendingWhatIf] = useState<{ eventType: string; payload: object; preview: string } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [networkSize, setNetworkSize] = useState({ width: 480, height: 360 })
 
   const initData = state.initData
   const latestTick = state.latestTick
@@ -64,25 +71,131 @@ export default function LivePage() {
     toast.success('Snapshot exported!')
   }
 
-  const [isStopping, setIsStopping] = useState(false)
+  const handleWhatIfPreview = async () => {
+    if (!whatIfInput.trim()) {
+      toast.error('Please describe a what-if scenario')
+      return
+    }
+    
+    setWhatIfLoading(true)
+    try {
+      const res = await fetch(`/api/simulations/${simId}/whatif`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: whatIfInput }),
+      })
+      
+      if (!res.ok) throw new Error('What-if analysis failed')
+      
+      const data = await res.json()
+      
+      if (!data.eventType || !data.payload || !data.preview) {
+        throw new Error('Invalid what-if response format')
+      }
+      
+      toast.success('📊 What-if scenario analyzed. Review & confirm injection?')
+      setPendingWhatIf({
+        eventType: data.eventType,
+        payload: data.payload,
+        preview: data.preview,
+      })
+      setShowWhatIfConfirm(true)
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : 'What-if analysis failed'
+      toast.error(errMsg)
+    } finally {
+      setWhatIfLoading(false)
+    }
+  }
+
+  const handleWhatIfConfirm = async () => {
+    if (!pendingWhatIf) return
+    
+    try {
+      await inject(pendingWhatIf.eventType, pendingWhatIf.payload)
+      toast.success('✅ What-if scenario injected!')
+      setWhatIfInput('')
+      setPendingWhatIf(null)
+      setShowWhatIfConfirm(false)
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : 'Injection failed'
+      toast.error(errMsg)
+    }
+  }
 
   const handleStop = async () => {
-    setIsStopping(true)
-    await control('stop')
-    toast('Simulation stopped — generating analysis...', { icon: '🔬' })
+    try {
+      await control('stop')
+      
+      await new Promise(r => setTimeout(r, 1000))
+      
+      // Compute peak velocity: largest absolute change in total agents between consecutive ticks
+      let peakVelocityTick = 0
+      let peakVelocity = 0
+      if (state.history.length > 1) {
+        for (let i = 1; i < state.history.length; i++) {
+          const prev = state.history[i - 1].total_agents
+          const curr = state.history[i].total_agents
+          const delta = Math.abs(curr - prev)
+          if (delta > peakVelocity) {
+            peakVelocity = delta
+            peakVelocityTick = state.history[i].tick
+          }
+        }
+      }
+      
+      const analysisKey = `sim-analysis-${simId}`
+      const analysisData = {
+        report: state.analysisReport || {
+          summary: 'Analysis generation in progress...',
+          timeline: `Simulation completed at tick ${state.tick} with ${state.latestTick?.total_agents ?? 0} agents`,
+          personalities: {},
+          realWorldParallel: 'See full analysis for details',
+          recommendations: [],
+        },
+        stats: {
+          totalTicks: state.tick,
+          agentCount: state.latestTick?.total_agents ?? 0,
+          dominantState: Object.entries(state.latestTick?.state_counts ?? {}).sort(([, a], [, b]) => b - a)[0]?.[0] ?? 'unknown',
+          peakVelocityTick,
+        },
+        history: state.history,
+        states: states,
+        stateColors: stateColors,
+      }
+      
+      sessionStorage.setItem(analysisKey, JSON.stringify(analysisData))
+      toast.success('Analysis saved! Redirecting...', { icon: '🔬' })
+      
+      setTimeout(() => {
+        navigate(`/analysis/${simId}`)
+      }, 1000)
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : 'Stop failed'
+      toast.error(errMsg)
+    }
   }
 
-  // Show analysis view after stop
-  if (isStopping || state.analysis) {
-    return <AnalysisView
-      analysis={state.analysis}
-      history={state.history}
-      stateColors={stateColors}
-      states={states}
-      simId={simId ?? ''}
-      onBack={() => navigate('/')}
-    />
-  }
+  // Responsive sizing for AgentNetwork
+  useEffect(() => {
+    const handleResize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect()
+        const newWidth = Math.max(300, rect.width - 32)
+        const newHeight = Math.max(200, rect.height - 80)
+        setNetworkSize({ width: newWidth, height: newHeight })
+      }
+    }
+
+    const resizeObserver = new ResizeObserver(handleResize)
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current)
+    }
+
+    handleResize() // Initial size
+
+    return () => resizeObserver.disconnect()
+  }, [])
 
   return (
     <div style={{ height: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column' }}>
@@ -184,6 +297,14 @@ export default function LivePage() {
           >
             ■ Stop & Analyze
           </button>
+          <button
+            className="btn-secondary"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{ fontSize: 12, padding: '6px 14px' }}
+            title="Toggle sidebar"
+          >
+            {sidebarOpen ? '◀' : '▶'}
+          </button>
         </div>
       </header>
 
@@ -212,164 +333,201 @@ export default function LivePage() {
         </button>
       </div>
 
-      {/* Main grid */}
-      <div style={{
-        flex: 1,
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gridTemplateRows: '1fr 1fr',
-        gap: 12,
-        padding: 12,
-        minHeight: 0,
-      }}>
-        {/* Panel 1 — Network */}
-        <div style={PANEL_STYLE.glass}>
-          <div style={PANEL_STYLE.header}>
-            <span>🕸 Agent Network</span>
-            {initData && (
-              <span style={{ fontWeight: 400, fontSize: 11 }}>
-                {Object.keys(initData.positions).length > 300 ? 'Heatmap mode' : 'Graph mode'}
+      {/* Main grid with sidebar */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* Main content area */}
+        <div style={{
+          flex: 1,
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gridTemplateRows: '1fr 1fr',
+          gap: 12,
+          padding: 12,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}>
+          {/* Panel 1 — Network */}
+          <div style={PANEL_STYLE.glass} ref={containerRef}>
+            <div style={PANEL_STYLE.header}>
+              <span>🕸 Agent Network</span>
+              {initData && (
+                <span style={{ fontWeight: 400, fontSize: 11 }}>
+                  {Object.keys(initData.positions).length > 300 ? 'Heatmap mode' : 'Graph mode'}
+                </span>
+              )}
+            </div>
+            <div style={{ flex: 1, padding: 12, minHeight: 0 }}>
+              <AgentNetwork
+                initData={initData}
+                latestTick={latestTick}
+                width={networkSize.width}
+                height={networkSize.height}
+                events={state.events}
+              />
+            </div>
+          </div>
+
+          {/* Panel 2 — Time Series */}
+          <div style={PANEL_STYLE.glass}>
+            <div style={PANEL_STYLE.header}>📈 Population Over Time</div>
+            <div style={{ flex: 1, padding: '12px 16px', minHeight: 0 }}>
+              <TimeSeriesChart
+                history={state.history}
+                stateColors={stateColors}
+                states={states}
+              />
+            </div>
+          </div>
+
+          {/* Panel 3 — Event Log */}
+          <div style={PANEL_STYLE.glass}>
+            <div style={PANEL_STYLE.header}>
+              <span>📋 Live Events</span>
+              <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
+                {state.events.length} total
               </span>
-            )}
+            </div>
+            <div style={{ ...PANEL_STYLE.body, overflowY: 'hidden' }}>
+              <EventLog events={state.events} stateColors={stateColors} />
+            </div>
           </div>
-          <div style={{ flex: 1, padding: 12, minHeight: 0 }}>
-            <AgentNetwork
-              initData={initData}
-              latestTick={latestTick}
-              width={480}
-              height={360}
-            />
-          </div>
-        </div>
 
-        {/* Panel 2 — Time Series */}
-        <div style={PANEL_STYLE.glass}>
-          <div style={PANEL_STYLE.header}>📈 Population Over Time</div>
-          <div style={{ flex: 1, padding: '12px 16px', minHeight: 0 }}>
-            <TimeSeriesChart
-              history={state.history}
-              stateColors={stateColors}
-              states={states}
-            />
+          {/* Panel 4 — Breakdown */}
+          <div style={PANEL_STYLE.glass}>
+            <div style={PANEL_STYLE.header}>👥 Personality Breakdown</div>
+            <div style={{ ...PANEL_STYLE.body, overflowY: 'auto' }}>
+              <BreakdownPanel
+                latestTick={latestTick}
+                stateColors={stateColors}
+                states={states}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Panel 3 — Event Log */}
-        <div style={PANEL_STYLE.glass}>
-          <div style={PANEL_STYLE.header}>
-            <span>📋 Live Events</span>
-            <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
-              {state.events.length} total
-            </span>
-          </div>
-          <div style={{ ...PANEL_STYLE.body, overflowY: 'hidden' }}>
-            <EventLog events={state.events} stateColors={stateColors} />
-          </div>
-        </div>
+        {/* Sidebar — What-If Mode & Stats */}
+        {sidebarOpen && (
+          <div style={{
+            width: 320,
+            borderLeft: '1px solid var(--border)',
+            background: 'var(--bg-surface)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-secondary)' }}>WHAT-IF MODE</span>
+            </div>
 
-        {/* Panel 4 — Breakdown */}
-        <div style={PANEL_STYLE.glass}>
-          <div style={PANEL_STYLE.header}>👥 Personality Breakdown</div>
-          <div style={{ ...PANEL_STYLE.body, overflowY: 'auto' }}>
-            <BreakdownPanel
-              latestTick={latestTick}
-              stateColors={stateColors}
-              states={states}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Analysis view ──────────────────────────────────────────────────────────
-
-function AnalysisView({
-  analysis, history, stateColors, states, simId, onBack
-}: {
-  analysis: string
-  history: any[]
-  stateColors: Record<string, string>
-  states: string[]
-  simId: string
-  onBack: () => void
-}) {
-  const last = history[history.length - 1]
-
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <header style={{
-        padding: '20px 40px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: 16,
-        background: 'rgba(14,21,37,0.8)', backdropFilter: 'blur(20px)',
-      }}>
-        <button className="btn-icon" onClick={onBack}>←</button>
-        <div>
-          <h1 className="gradient-text" style={{ fontSize: 24, fontWeight: 900 }}>Simulation Analysis</h1>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>ID: {simId} · {history.length} ticks recorded</p>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 900, margin: '0 auto', padding: '48px 32px', display: 'flex', flexDirection: 'column', gap: 32 }}>
-        {/* Stats row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
-          <div className="stat-card">
-            <div className="stat-value gradient-text">{history.length}</div>
-            <div className="stat-label">Total Ticks</div>
-          </div>
-          {states.map(s => (
-            <div key={s} className="stat-card">
-              <div className="stat-value" style={{ color: stateColors[s], fontSize: 22 }}>
-                {last?.state_counts[s] ?? 0}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* What-If Input */}
+              <div>
+                <label className="label" style={{ marginBottom: 8 }}>Scenario</label>
+                <textarea
+                  className="input"
+                  value={whatIfInput}
+                  onChange={e => setWhatIfInput(e.target.value)}
+                  placeholder="Describe a hypothetical event or intervention..."
+                  rows={4}
+                  style={{ resize: 'vertical', lineHeight: 1.5, fontFamily: 'Inter, sans-serif' }}
+                />
               </div>
-              <div className="stat-label">{s.replace(/_/g, ' ')} (final)</div>
-            </div>
-          ))}
-        </div>
 
-        {/* Final time series */}
-        <div className="glass" style={{ padding: 24 }}>
-          <h3 style={{ fontWeight: 700, marginBottom: 16 }}>Population History</h3>
-          <div style={{ height: 280 }}>
-            <TimeSeriesChart history={history} stateColors={stateColors} states={states} />
-          </div>
-        </div>
+              <button
+                className="btn-primary"
+                onClick={handleWhatIfPreview}
+                disabled={whatIfLoading || !whatIfInput.trim()}
+                style={{ width: '100%', padding: '10px 16px', fontSize: 13 }}
+              >
+                {whatIfLoading ? '⏳ Analyzing...' : '🔮 Preview Impact'}
+              </button>
 
-        {/* AI Analysis */}
-        <div className="glass" style={{ padding: 32 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10,
-              background: 'linear-gradient(135deg, var(--accent), var(--accent2))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 18, flexShrink: 0,
-            }}>✦</div>
-            <div>
-              <h3 style={{ fontWeight: 700, fontSize: 18 }}>Gemini Analysis</h3>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>AI-generated summary of emergent behavior</p>
+              {/* Current Stats */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>
+                  Live Stats
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Current Tick:</span>
+                    <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{state.tick}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Total Agents:</span>
+                    <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{totalAgents}</span>
+                  </div>
+                  {states.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 500 }}>State Distribution:</div>
+                      {states.map(s => {
+                        const count = latestTick?.state_counts[s] ?? 0
+                        const pct = totalAgents > 0 ? ((count / totalAgents) * 100).toFixed(0) : '0'
+                        return (
+                          <div key={s} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: stateColors[s] ?? '#888', flexShrink: 0 }} />
+                              {s.replace(/_/g, ' ')}
+                            </span>
+                            <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-          {analysis ? (
-            <div style={{
-              lineHeight: 1.8, color: 'var(--text-secondary)', fontSize: 15,
-              whiteSpace: 'pre-wrap', fontFamily: 'Inter, sans-serif',
+        )}
+      </div>
+
+      {/* What-If Confirmation Dialog */}
+      {showWhatIfConfirm && pendingWhatIf && (
+        <div 
+          className="modal-overlay" 
+          onClick={e => { if (e.target === e.currentTarget) setShowWhatIfConfirm(false) }}
+        >
+          <div className="modal">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--gradient-accent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 20,
+              }}>🔮</div>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 700 }}>What-If Impact Preview</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Review the predicted scenario effects</p>
+              </div>
+            </div>
+            <div style={{ 
+              background: 'var(--bg-surface)', 
+              padding: '16px',
+              borderRadius: 12,
+              marginBottom: 24,
+              border: '1px solid var(--border)',
             }}>
-              {analysis}
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {pendingWhatIf.preview}
+              </p>
             </div>
-          ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-              ⏳ Generating analysis... Gemini is reviewing your simulation data.
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button 
+                className="btn-secondary" 
+                onClick={() => setShowWhatIfConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn-primary" 
+                onClick={handleWhatIfConfirm}
+              >
+                ✓ Inject & Continue
+              </button>
             </div>
-          )}
+          </div>
         </div>
-
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <button className="btn-primary" onClick={onBack} style={{ padding: '14px 40px' }}>
-            ← Start New Simulation
-          </button>
-        </div>
-      </main>
+      )}
     </div>
   )
 }
