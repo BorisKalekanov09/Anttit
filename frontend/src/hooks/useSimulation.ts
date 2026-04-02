@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { SimMessage, SimState, InitMessage, TickMessage } from '../types/simulation'
 
-const WS_BASE = `ws://${window.location.hostname}:8000`
+const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://${window.location.hostname}:3001`
 
 export function useSimulation(simId: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null)
@@ -14,7 +14,7 @@ export function useSimulation(simId: string | undefined) {
     latestTick: null,
     events: [],
     history: [],
-    analysis: '',
+    analysisReport: null,
   })
 
   useEffect(() => {
@@ -40,7 +40,12 @@ export function useSimulation(simId: string | undefined) {
           history: [...s.history, tick].slice(-2000),
         }))
       } else if (msg.type === 'analysis') {
-        setState(s => ({ ...s, running: false, analysis: (msg as any).text }))
+        const analysisMsg = msg as any
+        setState(s => ({ 
+          ...s, 
+          running: false, 
+          analysisReport: analysisMsg.report || null,
+        }))
       }
     }
 

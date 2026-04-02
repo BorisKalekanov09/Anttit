@@ -83,7 +83,6 @@ export default function TimeSeriesChart({ history, stateColors, states }: Props)
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || history.length === 0) return
-    const latest = history[history.length - 1]
     const MAX_POINTS = 300
 
     chart.data.labels = history.slice(-MAX_POINTS).map(h => `T${h.tick}`)

@@ -1,0 +1,10 @@
+.sisyphus/
+node_modules/
+.env
+dist/
+build/
+tmp/
+temp/
+nul
+*.log
+.DS_Store

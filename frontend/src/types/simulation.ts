@@ -30,6 +30,15 @@ export interface SimConfig {
 }
 
 // WebSocket message types
+export interface Agent {
+  id: string;
+  state: string;
+  role: 'influencer' | 'skeptic' | 'bot' | 'follower';
+  personality: string;
+  emotionalState: number;
+  memory: string[];
+}
+
 export interface InitMessage {
   type: 'init';
   positions: Record<string, [number, number]>;
@@ -38,6 +47,7 @@ export interface InitMessage {
   state_colors: Record<string, string>;
   personalities: { name: string; color: string }[];
   theme: string;
+  agents?: Agent[];
 }
 
 export interface TickEvent {
@@ -48,6 +58,7 @@ export interface TickEvent {
   to_state: string;
   reason: string;
   ai: boolean;
+  emotionalState?: number;
 }
 
 export interface TickMessage {
@@ -58,11 +69,21 @@ export interface TickMessage {
   events: TickEvent[];
   node_states: Record<string, string>;
   total_agents: number;
+  role_breakdown?: Record<string, number>;
+  agents?: Agent[];
+}
+
+export interface AnalysisReport {
+  summary: string;
+  timeline: string;
+  personalities: Record<string, string>;
+  realWorldParallel: string;
+  recommendations: string[];
 }
 
 export interface AnalysisMessage {
   type: 'analysis';
-  text: string;
+  report: AnalysisReport;
 }
 
 export type SimMessage = InitMessage | TickMessage | AnalysisMessage;
@@ -76,5 +97,5 @@ export interface SimState {
   latestTick: TickMessage | null;
   events: TickEvent[];
   history: TickMessage[];
-  analysis: string;
+  analysisReport: AnalysisReport | null;
 }
