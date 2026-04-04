@@ -7,31 +7,47 @@ interface StepWizardProps {
 
 export const StepWizard: React.FC<StepWizardProps> = ({ steps, currentStep }) => {
   return (
-    <div className="flex items-center justify-center gap-2 mb-8">
-      {steps.map((_, idx) => (
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: 0 }}>
+      {steps.map((label, idx) => (
         <React.Fragment key={idx}>
-          <div
-            className={`
-              flex items-center justify-center w-10 h-10 rounded-full font-semibold text-sm
-              transition-all duration-300
-              ${
-                idx < currentStep
-                  ? 'bg-[var(--accent)] text-white'
-                  : idx === currentStep
-                    ? 'bg-[var(--accent)] text-white ring-2 ring-[var(--accent-glow)]'
-                    : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border border-[var(--border)]'
-              }
-            `}
-          >
-            {idx < currentStep ? '✓' : idx + 1}
+          {/* Step circle + label */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 700, fontSize: 13,
+              transition: 'all 0.25s',
+              background: idx <= currentStep ? 'var(--accent)' : 'var(--bg-card)',
+              color: idx <= currentStep ? '#fff' : 'var(--text-secondary)',
+              border: idx === currentStep
+                ? '2px solid var(--accent)'
+                : idx < currentStep
+                  ? '2px solid var(--accent)'
+                  : '1px solid var(--border)',
+              boxShadow: idx === currentStep ? '0 0 0 3px var(--accent-glow)' : 'none',
+            }}>
+              {idx < currentStep ? '✓' : idx + 1}
+            </div>
+            <span style={{
+              fontSize: 11,
+              fontWeight: idx === currentStep ? 700 : 400,
+              color: idx === currentStep ? 'var(--accent)' : idx < currentStep ? 'var(--text-secondary)' : 'var(--text-muted)',
+              whiteSpace: 'nowrap',
+              letterSpacing: '0.02em',
+            }}>
+              {label}
+            </span>
           </div>
+
+          {/* Connector line between steps */}
           {idx < steps.length - 1 && (
-            <div
-              className={`
-                h-1 w-16 rounded-full transition-all duration-300
-                ${idx < currentStep ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}
-              `}
-            />
+            <div style={{
+              height: 2, width: 48, flexShrink: 0,
+              background: idx < currentStep ? 'var(--accent)' : 'var(--border)',
+              borderRadius: 1,
+              marginTop: 17, // align with circle center
+              transition: 'background 0.25s',
+            }} />
           )}
         </React.Fragment>
       ))}

@@ -10,6 +10,10 @@ import modelsRouter from './routes/models.js';
 import traitsRouter from './routes/traits.js';
 import seedRouter from './routes/seed.js';
 import whatifRouter from './routes/whatif.js';
+import feedRouter from './routes/feed.js';
+import agentsRouter from './routes/agents.js';
+import worldBuilderRouter from './routes/worldBuilder.js';
+import { viewerIdMiddleware } from './middleware/viewerId.js';
 import { getSimulation } from './simulation/registry.js';
 
 config();
@@ -22,7 +26,7 @@ app.use(express.json());
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Viewer-Id');
   next();
 });
 
@@ -41,6 +45,9 @@ app.use('/api/models', modelsRouter);
 app.use('/api/trait-tooltip', traitsRouter);
 app.use('/api/seed', seedRouter);
 app.use('/api/simulations/:simId/whatif', whatifRouter);
+app.use('/api/simulations/:simId/feed', viewerIdMiddleware, feedRouter);
+app.use('/api/simulations/:simId/agents', viewerIdMiddleware, agentsRouter);
+app.use('/api/world-builder', worldBuilderRouter);
 
 const server = createServer(app);
 

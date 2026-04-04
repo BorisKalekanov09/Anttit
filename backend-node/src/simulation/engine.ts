@@ -1,19 +1,30 @@
 import Graph from 'graphology';
-import type { 
-  SimulationConfig, 
-  PersonalityDef, 
-  TickEvent, 
-  TickMessage, 
+import { v4 as uuidv4 } from 'uuid';
+import type {
+  SimulationConfig,
+  PersonalityDef,
+  TickEvent,
+  TickMessage,
   InitMessage,
   AnalysisReport,
   AgentRole,
   RoleMix,
   Decision,
+  DiscussionComment,
+  DiscussionPost,
+  FeedUpdateMessage,
+  AgentAction,
+  Belief,
+  BeliefUpdateMessage,
+  RelationshipUpdateMessage,
+  RelationshipType,
 } from '../types.js';
 import { Agent, createAgent, addMemory, addEpisodicMemory, getTraits, applyRoleModifiers, canCompressMemory, canBecomeResistant } from './agent.js';
 import { buildGraph, computePositions, getEdgeList, TopologyType } from './topology.js';
 import { loadTheme, ThemeModule } from './themes/index.js';
 import * as gemini from '../ai/gemini.js';
+import { addLike, addComment, readFeed } from '../store/feedStore.js';
+import { graphDb } from '../db/graphDb.js';
 
 export class SimulationEngine {
   config: SimulationConfig;
@@ -64,6 +75,10 @@ export class SimulationEngine {
       const role: AgentRole = roles ? roles[i] : 'default';
       
       const agent = createAgent(id, pDef, this.theme.INITIAL_STATE, role);
+      agent.beliefs = this.theme.VALID_STATES.map((state) => ({
+        topic: state,
+        weight: 0.5,
+      }));
       applyRoleModifiers(agent);
       this.agents.set(id, agent);
     }
@@ -326,15 +341,27 @@ export class SimulationEngine {
       if (newState !== agent.state && this.theme.VALID_STATES.includes(newState)) {
         const oldState = agent.state;
         agent.state = newState;
-        
+
+        this.updateBeliefsForTransition(agent, oldState, newState);
+        const beliefMsg: BeliefUpdateMessage = {
+          type: 'belief_update',
+          agentId: aid,
+          beliefs: agent.beliefs,
+        };
+        this.emit(beliefMsg);
+
         const eventText = `Tick ${this.tick}: Agent ${aid} (${agent.personality.name}) ${oldState}→${newState} — ${reason}`;
         addMemory(agent, eventText);
-        
+
+        // Retrieve reasoning trace if this was an AI decision
+        const geminiResult = (agent as any)._lastGeminiResult as { reasoning_trace?: unknown; confidence?: number } | undefined;
         addEpisodicMemory(agent, {
           tick: this.tick,
           event: `changed from ${oldState} to ${newState}`,
           influence: 'neighbors',
           impact: geminiDecisions.has(aid) ? 'high' : 'low',
+          reasoning_trace: geminiResult?.reasoning_trace as any,
+          confidence: geminiResult?.confidence,
         });
 
         tickEvents.push({
@@ -346,6 +373,17 @@ export class SimulationEngine {
           reason,
           ai: geminiDecisions.has(aid),
         });
+
+        // Track relationship: find the neighbor most likely to have influenced this state change
+        if (geminiDecisions.has(aid)) {
+          void this.recordInfluenceRelationship(aid, newState, reason);
+        }
+      }
+    }
+
+    for (const agent of this.agents.values()) {
+      if (Math.random() * 100 < agent.personality.activity) {
+        void this.performAutoAgentAction(agent);
       }
     }
 
@@ -462,6 +500,9 @@ export class SimulationEngine {
       this.config.modelName
     );
 
+    // Stash the full result so executeTick can read reasoning_trace + confidence
+    (agent as any)._lastGeminiResult = result;
+
     let newState = result.new_state || agent.state;
     if (!this.theme.VALID_STATES.includes(newState)) {
       newState = agent.state;
@@ -481,6 +522,58 @@ export class SimulationEngine {
     }
 
     return [newState, result.reason || 'AI decision'];
+  }
+
+  private async recordInfluenceRelationship(
+    changedAgentId: string,
+    newState: string,
+    reason: string
+  ): Promise<void> {
+    try {
+      const neighbors = this.getNeighbors(changedAgentId);
+      if (neighbors.length === 0) return;
+
+      // Find neighbors already in the new state — they influenced this change
+      const matchingNeighbors = neighbors.filter(
+        n => this.agents.get(n)?.state === newState
+      );
+      if (matchingNeighbors.length === 0) return;
+
+      // Pick the neighbor with the highest influence trait as the primary influencer
+      const influencerId = matchingNeighbors.reduce((best, n) => {
+        const bestTraits = getTraits(this.agents.get(best)!);
+        const nTraits = getTraits(this.agents.get(n)!);
+        return (nTraits.influence ?? 50) > (bestTraits.influence ?? 50) ? n : best;
+      }, matchingNeighbors[0]);
+
+      const strength = 0.3 + (matchingNeighbors.length / Math.max(neighbors.length, 1)) * 0.5;
+
+      // Determine relationship type from state transition context
+      let relType: RelationshipType = 'INFLUENCES';
+      if (newState.includes('resistant') || newState.includes('skeptic')) {
+        relType = 'DISAGREES_WITH';
+      } else if (newState === this.agents.get(influencerId)?.state) {
+        relType = 'SUPPORTS';
+      }
+
+      const rel = await graphDb.recordRelationship(
+        this.config.simId,
+        influencerId,
+        changedAgentId,
+        relType,
+        strength,
+        reason.slice(0, 200),
+        this.tick
+      );
+
+      const relMsg: RelationshipUpdateMessage = {
+        type: 'relationship_update',
+        data: rel,
+      };
+      this.emit(relMsg);
+    } catch {
+      // Relationship tracking is non-critical — never let it break a tick
+    }
   }
 
   private applyInjection(ev: { type: string; [key: string]: unknown }): void {
@@ -609,5 +702,130 @@ export class SimulationEngine {
       ),
       metrics_history: this.metricsHistory.slice(-100),
     };
+  }
+
+  private recordAction(agentId: string, actionType: 'like' | 'comment', feedPostId?: string): void {
+    try {
+      const agent = this.agents.get(agentId);
+      if (!agent) {
+        console.warn(`[Engine] Agent ${agentId} not found for action recording`);
+        return;
+      }
+
+      const action: AgentAction = {
+        id: uuidv4(),
+        agentId,
+        actionType,
+        feedPostId,
+        createdAt: new Date().toISOString(),
+      };
+
+      agent.actionLog.push(action);
+    } catch (error) {
+      console.error('[Engine] Error recording action:', error);
+      // Non-blocking: don't throw
+    }
+  }
+
+  async addFeedLike(postId: string, agentId?: string): Promise<void> {
+    try {
+      await addLike(this.config.simId, postId);
+      
+      // Record action if agentId provided
+      if (agentId) {
+        this.recordAction(agentId, 'like', postId);
+      }
+      
+      // Emit feed_update with current feed snapshot
+      const feedSnapshot = await readFeed(this.config.simId);
+      const feedMsg: FeedUpdateMessage = {
+        type: 'feed_update',
+        reason: 'like',
+        posts: feedSnapshot.posts,
+      };
+      this.emit(feedMsg);
+    } catch (error) {
+      console.error('[Engine] Error adding like to post:', error);
+      throw error;
+    }
+  }
+
+  async addFeedComment(postId: string, comment: DiscussionComment, agentId?: string): Promise<void> {
+    try {
+      await addComment(this.config.simId, postId, comment);
+      
+      // Record action if agentId provided
+      if (agentId) {
+        this.recordAction(agentId, 'comment', postId);
+      }
+      
+      // Emit feed_update with current feed snapshot
+      const feedSnapshot = await readFeed(this.config.simId);
+      const feedMsg: FeedUpdateMessage = {
+        type: 'feed_update',
+        reason: 'comment',
+        posts: feedSnapshot.posts,
+      };
+      this.emit(feedMsg);
+    } catch (error) {
+      console.error('[Engine] Error adding comment to post:', error);
+      throw error;
+    }
+  }
+
+  async getDiscussionFeed(): Promise<DiscussionPost[]> {
+    try {
+      const feedSnapshot = await readFeed(this.config.simId);
+      return feedSnapshot.posts;
+    } catch (error) {
+      console.error('[Engine] Error retrieving discussion feed:', error);
+      return [];
+    }
+  }
+
+  getAgents(): Map<string, Agent> {
+    return this.agents;
+  }
+
+  private updateBeliefsForTransition(agent: Agent, fromState: string, toState: string): void {
+    const delta = 0.05;
+    agent.beliefs = agent.beliefs.map((belief: Belief) => {
+      let weight = belief.weight;
+      if (belief.topic === toState) {
+        weight = Math.min(1, weight + delta);
+      }
+      if (belief.topic === fromState) {
+        weight = Math.max(0, weight - delta);
+      }
+      return { ...belief, weight };
+    });
+  }
+
+  private async performAutoAgentAction(agent: Agent): Promise<void> {
+    try {
+      const feedSnapshot = await readFeed(this.config.simId);
+      const posts = feedSnapshot.posts;
+
+      if (posts.length === 0) {
+        return;
+      }
+
+      const targetPost = posts[Math.floor(Math.random() * posts.length)];
+      if (Math.random() < 0.5) {
+        await this.addFeedLike(targetPost.id, agent.agentId);
+      } else {
+        const comment: DiscussionComment = {
+          id: uuidv4(),
+          author: agent.personality.name,
+          author_type: 'agent',
+          message: `${agent.personality.name} reacts to this discussion.`,
+          created_at: new Date().toISOString(),
+          agentId: agent.agentId,
+        };
+        await this.addFeedComment(targetPost.id, comment, agent.agentId);
+      }
+    } catch (error) {
+      console.error('[Engine] Auto agent action failed:', error);
+    }
   }
 }

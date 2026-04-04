@@ -1,4 +1,4 @@
-import type { PersonalityDef, AgentRole, EpisodicEntry } from '../types.js';
+import type { PersonalityDef, AgentRole, EpisodicEntry, Belief, AgentAction } from '../types.js';
 
 export interface AgentPersonality {
   name: string;
@@ -24,6 +24,8 @@ export interface Agent {
   socialTies: Map<string, 'trust' | 'distrust'>;
   resistantBias: boolean;
   followerThreshold: number;
+  beliefs: Belief[];
+  actionLog: AgentAction[];
 }
 
 const MEMORY_MAX_LENGTH = 40;
@@ -56,6 +58,8 @@ export function createAgent(
     socialTies: new Map(),
     resistantBias: role === 'skeptic',
     followerThreshold: role === 'follower' ? 0.6 : 0.8,
+    beliefs: [],
+    actionLog: [],
   };
 }
 
@@ -71,9 +75,6 @@ export function addEpisodicMemory(
   entry: EpisodicEntry
 ): void {
   agent.episodicMemory.push(entry);
-  if (agent.episodicMemory.length > 10) {
-    agent.episodicMemory.shift();
-  }
 }
 
 export function getTraits(agent: Agent): Record<string, number> {

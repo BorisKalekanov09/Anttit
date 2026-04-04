@@ -3,6 +3,15 @@
  * Mirrors Python backend types + new feature fields from plan
  */
 
+// ── Reasoning Trace (used in EpisodicEntry + GeminiDecision) ─────────────
+
+export interface ReasoningTrace {
+  personality_influence: string;
+  memory_influence: string;
+  social_pressure: string;
+  emotional_state_impact: string;
+}
+
 // ── Agent Role Types (Feature 5) ──────────────────────────────────────────
 
 export type AgentRole = 'default' | 'influencer' | 'skeptic' | 'bot' | 'follower';
@@ -53,6 +62,8 @@ export interface EpisodicEntry {
   influence: string;       // which agent triggered this
   impact: 'high' | 'low';
   createdAt?: string;      // ISO timestamp (real time, not epoch-based)
+  reasoning_trace?: ReasoningTrace;
+  confidence?: number;
 }
 
 // ── Belief Types (Feature 7: Agent Beliefs & Actions) ─────────────────────
@@ -281,9 +292,32 @@ export interface GeminiDecision {
   action: 'stay' | 'change';
   new_state: string;
   reason: string;
-  emotional_shift?: number;  // Feature 2: Enhanced Memory
+  emotional_shift?: number;
+  confidence?: number;
+  reasoning_trace?: ReasoningTrace;
 }
 
 // ── Decision Type ─────────────────────────────────────────────────────────
 
 export type Decision = [string, string]; // [new_state, reason]
+
+// ── WorldBuilder Types ────────────────────────────────────────────────────
+
+export interface WorldBuilderRequest {
+  topic: string;
+}
+
+export interface WorldConfig {
+  topic: string;
+  scenario_description: string;
+  agent_count: number;
+  key_concepts: string[];
+  personality_archetypes: PersonalityDef[];
+  initial_state_distribution: Record<string, number>;
+  suggested_config: {
+    theme: string;
+    agent_count: number;
+    topology: string;
+    tick_rate: number;
+  };
+}

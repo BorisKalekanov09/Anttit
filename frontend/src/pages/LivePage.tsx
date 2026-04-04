@@ -2,10 +2,13 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useSimulation } from '../hooks/useSimulation'
-import AgentNetwork from '../components/AgentNetwork'
-import TimeSeriesChart from '../components/TimeSeriesChart'
-import EventLog from '../components/EventLog'
-import BreakdownPanel from '../components/BreakdownPanel'
+import AgentGraphVisualization from '../components/AgentGraphVisualization'
+import SimulationSidebar from '../components/SimulationSidebar'
+import AgentDetailDrawer from '../components/AgentDetailDrawer'
+import InfoPlaza from '../components/InfoPlaza'
+import DiscussionFeed from '../components/DiscussionFeed'
+import SystemConsole from '../components/SystemConsole'
+import type { Relationship } from '../types/simulation'
 
 const PANEL_STYLE = {
   glass: {
@@ -38,15 +41,25 @@ const PANEL_STYLE = {
 export default function LivePage() {
   const { simId } = useParams<{ simId: string }>()
   const navigate = useNavigate()
-  const { state, control, inject, snapshot } = useSimulation(simId)
+  const { state, control, inject, snapshot, likePost, commentPost, fetchAgentProfile, fetchAgentTimeline, likeAgentProfile } = useSimulation(simId)
   const [speed, setSpeed] = useState(0.4)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [whatIfInput, setWhatIfInput] = useState('')
   const [whatIfLoading, setWhatIfLoading] = useState(false)
   const [showWhatIfConfirm, setShowWhatIfConfirm] = useState(false)
   const [pendingWhatIf, setPendingWhatIf] = useState<{ eventType: string; payload: object; preview: string } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [networkSize, setNetworkSize] = useState({ width: 480, height: 360 })
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [agentProfile, setAgentProfile] = useState<any>(null)
+  const [agentTimeline, setAgentTimeline] = useState<any[]>([])
+  const [agentTimelineHasMore, setAgentTimelineHasMore] = useState(false)
+  const [isLoadingAgent, setIsLoadingAgent] = useState(false)
+  const [timelineOffset, setTimelineOffset] = useState(0)
+  const [agentHasLiked, setAgentHasLiked] = useState(false)
+  const [selectedRelationship, setSelectedRelationship] = useState<Relationship | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarAgentProfile, setSidebarAgentProfile] = useState<any>(null)
 
   const initData = state.initData
   const latestTick = state.latestTick
@@ -58,6 +71,120 @@ export default function LivePage() {
     setSpeed(v)
     await control('set_speed', v)
   }, [control])
+
+  const handleSelectAgent = useCallback(async (agentId: string) => {
+    setSelectedAgentId(agentId)
+    setIsLoadingAgent(true)
+    setAgentProfile(null)
+    setAgentTimeline([])
+    setTimelineOffset(0)
+    setAgentHasLiked(false)
+    
+    try {
+      const profile = await fetchAgentProfile(agentId)
+      setAgentProfile(profile)
+      setAgentHasLiked(profile?.viewerHasLiked ?? false)
+
+      const timeline = await fetchAgentTimeline(agentId, 0)
+      if (timeline) {
+        setAgentTimeline(timeline.data ?? [])
+        setAgentTimelineHasMore(timeline.pagination?.hasMore ?? false)
+        setTimelineOffset(timeline.data?.length ?? 0)
+      }
+    } catch (e) {
+      console.error('Failed to load agent profile:', e)
+      toast.error('Failed to load agent details')
+    } finally {
+      setIsLoadingAgent(false)
+    }
+  }, [fetchAgentProfile, fetchAgentTimeline])
+
+  // Graph node click → opens SimulationSidebar only (no backdrop from AgentDetailDrawer)
+  const handleGraphNodeClick = useCallback(async (agentId: string) => {
+    setSelectedRelationship(null)
+    setSidebarAgentProfile(null)
+    setSidebarOpen(true)
+    try {
+      const profile = await fetchAgentProfile(agentId)
+      setSidebarAgentProfile(profile)
+    } catch {
+      // non-critical, sidebar will show empty state
+    }
+  }, [fetchAgentProfile])
+
+  const handleLoadMoreTimeline = useCallback(async () => {
+    if (!selectedAgentId) return
+    try {
+      const timeline = await fetchAgentTimeline(selectedAgentId, timelineOffset)
+      if (timeline) {
+        setAgentTimeline(prev => [...prev, ...(timeline.data ?? [])])
+        setAgentTimelineHasMore(timeline.pagination?.hasMore ?? false)
+        setTimelineOffset(prev => prev + (timeline.data?.length ?? 0))
+      }
+    } catch (e) {
+      console.error('Failed to load more timeline:', e)
+      toast.error('Failed to load more timeline')
+    }
+  }, [selectedAgentId, timelineOffset, fetchAgentTimeline])
+
+  const handleLikeAgentProfile = useCallback(async () => {
+    if (!selectedAgentId) return
+    try {
+      const result = await likeAgentProfile(selectedAgentId)
+      if (result === null) {
+        // Already liked (409 status from backend)
+        toast('Already liked this profile')
+        return
+      }
+      setAgentHasLiked(true)
+      if (agentProfile) {
+        setAgentProfile({
+          ...agentProfile,
+          profileLikes: (agentProfile.profileLikes ?? 0) + 1,
+        })
+      }
+      toast.success('Profile liked!')
+    } catch (e) {
+      console.error('Failed to like profile:', e)
+      toast.error('Failed to like profile')
+    }
+  }, [selectedAgentId, likeAgentProfile, agentProfile])
+
+  const handleAgentLikePost = useCallback(async (postId: string) => {
+    if (!selectedAgentId || !simId) return
+    try {
+      const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: selectedAgentId }),
+      })
+      if (!res.ok) throw new Error('Failed to like post')
+      toast.success('Agent liked post!')
+    } catch (e) {
+      console.error('Failed to like post:', e)
+      toast.error('Failed to like post')
+    }
+  }, [selectedAgentId, simId])
+
+  const handleAgentCommentPost = useCallback(async (postId: string, message: string) => {
+    if (!selectedAgentId || !simId) return
+    try {
+      const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/comment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          author: 'Agent',
+          message,
+          agentId: selectedAgentId,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to post comment')
+      toast.success('Agent commented on post!')
+    } catch (e) {
+      console.error('Failed to comment:', e)
+      toast.error('Failed to post comment')
+    }
+  }, [selectedAgentId, simId])
 
   const handleSnapshot = async () => {
     const data = await snapshot()
@@ -299,11 +426,11 @@ export default function LivePage() {
           </button>
           <button
             className="btn-secondary"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            onClick={() => setRightPanelOpen(!rightPanelOpen)}
             style={{ fontSize: 12, padding: '6px 14px' }}
-            title="Toggle sidebar"
+            title="Toggle right panel"
           >
-            {sidebarOpen ? '◀' : '▶'}
+            {rightPanelOpen ? '▶' : '◀'}
           </button>
         </div>
       </header>
@@ -333,152 +460,142 @@ export default function LivePage() {
         </button>
       </div>
 
-      {/* Main grid with sidebar */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* Main content area */}
+      {/* Main layout: top row (graph + right panel) + bottom console */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* Top row: left graph + right stacked panel */}
         <div style={{
           flex: 1,
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gridTemplateRows: '1fr 1fr',
+          display: 'flex',
+          flexWrap: 'wrap',
           gap: 12,
           padding: 12,
           minHeight: 0,
           overflow: 'hidden',
         }}>
-          {/* Panel 1 — Network */}
-          <div style={PANEL_STYLE.glass} ref={containerRef}>
-            <div style={PANEL_STYLE.header}>
-              <span>🕸 Agent Network</span>
-              {initData && (
-                <span style={{ fontWeight: 400, fontSize: 11 }}>
-                  {Object.keys(initData.positions).length > 300 ? 'Heatmap mode' : 'Graph mode'}
-                </span>
-              )}
-            </div>
-            <div style={{ flex: 1, padding: 12, minHeight: 0 }}>
-              <AgentNetwork
-                initData={initData}
-                latestTick={latestTick}
-                width={networkSize.width}
-                height={networkSize.height}
-                events={state.events}
-              />
-            </div>
-          </div>
-
-          {/* Panel 2 — Time Series */}
-          <div style={PANEL_STYLE.glass}>
-            <div style={PANEL_STYLE.header}>📈 Population Over Time</div>
-            <div style={{ flex: 1, padding: '12px 16px', minHeight: 0 }}>
-              <TimeSeriesChart
-                history={state.history}
-                stateColors={stateColors}
-                states={states}
-              />
-            </div>
-          </div>
-
-          {/* Panel 3 — Event Log */}
-          <div style={PANEL_STYLE.glass}>
-            <div style={PANEL_STYLE.header}>
-              <span>📋 Live Events</span>
-              <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
-                {state.events.length} total
-              </span>
-            </div>
-            <div style={{ ...PANEL_STYLE.body, overflowY: 'hidden' }}>
-              <EventLog events={state.events} stateColors={stateColors} />
-            </div>
-          </div>
-
-          {/* Panel 4 — Breakdown */}
-          <div style={PANEL_STYLE.glass}>
-            <div style={PANEL_STYLE.header}>👥 Personality Breakdown</div>
-            <div style={{ ...PANEL_STYLE.body, overflowY: 'auto' }}>
-              <BreakdownPanel
-                latestTick={latestTick}
-                stateColors={stateColors}
-                states={states}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar — What-If Mode & Stats */}
-        {sidebarOpen && (
+          {/* Left: Agent Relationship Graph (full width minus sidebar) */}
           <div style={{
-            width: 320,
-            borderLeft: '1px solid var(--border)',
-            background: 'var(--bg-surface)',
+            flex: '1 1 65%',
+            minWidth: 520,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: 16,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-          }}>
-            <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-secondary)' }}>WHAT-IF MODE</span>
+          }} ref={containerRef}>
+            <div style={{...PANEL_STYLE.header, gap: 8}}>
+              <span>🕸 Agent Relationship Graph</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
+                  {state.relationships.length > 0
+                    ? `${state.relationships.length} relationships`
+                    : 'topology edges'}
+                </span>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setSidebarOpen(v => !v)}
+                  style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6 }}
+                >
+                  {sidebarOpen ? 'Hide Inspector' : 'Inspector'}
+                </button>
+              </div>
             </div>
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+              <AgentGraphVisualization
+                initData={initData}
+                latestTick={latestTick}
+                relationships={state.relationships}
+                width={networkSize.width}
+                height={networkSize.height}
+                onSelectAgent={handleGraphNodeClick}
+                onSelectRelationship={(rel) => {
+                  setSelectedRelationship(rel)
+                  setSidebarAgentProfile(null)
+                  setSidebarOpen(true)
+                }}
+              />
+            </div>
+          </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* What-If Input */}
-              <div>
-                <label className="label" style={{ marginBottom: 8 }}>Scenario</label>
-                <textarea
-                  className="input"
-                  value={whatIfInput}
-                  onChange={e => setWhatIfInput(e.target.value)}
-                  placeholder="Describe a hypothetical event or intervention..."
-                  rows={4}
-                  style={{ resize: 'vertical', lineHeight: 1.5, fontFamily: 'Inter, sans-serif' }}
+          {/* Sidebar: relationship / agent inspector */}
+          {sidebarOpen && (
+            <SimulationSidebar
+              selectedRelationship={selectedRelationship}
+              selectedAgent={sidebarAgentProfile ?? null}
+              agentTimeline={[]}
+              onClose={() => { setSidebarOpen(false); setSidebarAgentProfile(null); setSelectedRelationship(null) }}
+            />
+          )}
+
+          {/* Right: Stacked Panel (Info Plaza + Discussion Feed) (35% min 320px) */}
+          {rightPanelOpen && (
+            <div style={{
+              flex: '1 1 35%',
+              minWidth: 320,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              minHeight: 0,
+            }}>
+              {/* Info Plaza */}
+              <div style={{ flex: 0.4, minHeight: 0 }}>
+                <InfoPlaza
+                  tick={state.tick}
+                  totalAgents={totalAgents}
+                  events={state.events}
+                  discussionPostCount={state.discussionFeed?.length ?? 0}
+                  latestTick={latestTick}
+                  whatIfInput={whatIfInput}
+                  onWhatIfInputChange={setWhatIfInput}
+                  onWhatIfPreview={handleWhatIfPreview}
+                  whatIfLoading={whatIfLoading}
+                  stateColors={stateColors}
                 />
               </div>
 
-              <button
-                className="btn-primary"
-                onClick={handleWhatIfPreview}
-                disabled={whatIfLoading || !whatIfInput.trim()}
-                style={{ width: '100%', padding: '10px 16px', fontSize: 13 }}
-              >
-                {whatIfLoading ? '⏳ Analyzing...' : '🔮 Preview Impact'}
-              </button>
-
-              {/* Current Stats */}
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>
-                  Live Stats
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Current Tick:</span>
-                    <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{state.tick}</span>
+              {/* Discussion Feed */}
+              <div style={{ flex: 0.6, minHeight: 0 }}>
+                <div style={{...PANEL_STYLE.glass, height: '100%'}}>
+                  <div style={PANEL_STYLE.header}>
+                    <span>TOPIC COMMUNITY</span>
+                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
+                      {state.discussionFeed?.length ?? 0} posts
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Total Agents:</span>
-                    <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{totalAgents}</span>
+                  <div style={{ flex: 1, padding: 12, minHeight: 0, overflow: 'hidden' }}>
+                    <DiscussionFeed
+                       posts={state.discussionFeed ?? []}
+                       personalities={initData?.personalities ?? []}
+                       onLike={(postId) => {
+                         likePost(postId).catch(e => 
+                           toast.error(e instanceof Error ? e.message : 'Failed to like post')
+                         )
+                       }}
+                        onComment={(postId, _author, message) => {
+                           commentPost(postId, message).catch(e => 
+                             toast.error(e instanceof Error ? e.message : 'Failed to post comment')
+                           )
+                         }}
+                       onOpenAgent={handleSelectAgent}
+                    />
                   </div>
-                  {states.length > 0 && (
-                    <div style={{ marginTop: 4 }}>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 500 }}>State Distribution:</div>
-                      {states.map(s => {
-                        const count = latestTick?.state_counts[s] ?? 0
-                        const pct = totalAgents > 0 ? ((count / totalAgents) * 100).toFixed(0) : '0'
-                        return (
-                          <div key={s} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
-                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: stateColors[s] ?? '#888', flexShrink: 0 }} />
-                              {s.replace(/_/g, ' ')}
-                            </span>
-                            <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* Bottom: System Console (220px, min 180 max 320) */}
+        <div style={{
+          flex: '0 0 220px',
+          minHeight: 180,
+          maxHeight: 320,
+          padding: 12,
+          paddingTop: 0,
+          overflow: 'hidden',
+        }}>
+          <SystemConsole history={state.history} />
+        </div>
       </div>
 
       {/* What-If Confirmation Dialog */}
@@ -528,6 +645,21 @@ export default function LivePage() {
           </div>
         </div>
       )}
+
+      <AgentDetailDrawer
+        agentId={selectedAgentId}
+        profile={agentProfile}
+        timeline={agentTimeline}
+        isLoading={isLoadingAgent}
+        timelineHasMore={agentTimelineHasMore}
+        onLoadMoreTimeline={handleLoadMoreTimeline}
+        onLikeProfile={handleLikeAgentProfile}
+        onClose={() => setSelectedAgentId(null)}
+        hasLiked={agentHasLiked}
+        feedPosts={state.discussionFeed ?? []}
+        onLikePost={handleAgentLikePost}
+        onCommentPost={handleAgentCommentPost}
+      />
     </div>
   )
 }

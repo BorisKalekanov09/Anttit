@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from 'dotenv';
-import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry } from '../types.js';
+import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry, ReasoningTrace } from '../types.js';
 
 config();
 
@@ -89,11 +89,35 @@ Key experiences: ${highImpactMemories}
 Emotional state: ${emotionalDesc} (${emotionalState.toFixed(2)})
 
 Decide your action this tick. Reply with ONLY a JSON object:
-{"action": "<stay|change>", "new_state": "<valid state name>", "reason": "<one sentence spoken as a quote or inner thought expressing your communication>", "emotional_shift": <optional number between -0.2 and 0.2 if this event affects your emotions>}`;
+{
+  "action": "<stay|change>",
+  "new_state": "<valid state name>",
+  "reason": "<one sentence spoken as a quote or inner thought>",
+  "confidence": <0.0-1.0>,
+  "emotional_shift": <optional number between -0.2 and 0.2>,
+  "reasoning_trace": {
+    "personality_influence": "<how your personality shapes this decision in one sentence>",
+    "memory_influence": "<what past experiences affect this in one sentence>",
+    "social_pressure": "<how neighbors influence you in one sentence>",
+    "emotional_state_impact": "<how your emotional state affects the decision in one sentence>"
+  }
+}`;
 
   const result = await model.generateContent(prompt);
   const text = stripMarkdownFences(result.response.text());
-  return JSON.parse(text);
+  const parsed = JSON.parse(text);
+  // Ensure reasoning_trace fields are strings (Gemini sometimes returns objects)
+  if (parsed.reasoning_trace) {
+    const rt = parsed.reasoning_trace as Record<string, unknown>;
+    const rtTyped: ReasoningTrace = {
+      personality_influence: String(rt.personality_influence ?? ''),
+      memory_influence: String(rt.memory_influence ?? ''),
+      social_pressure: String(rt.social_pressure ?? ''),
+      emotional_state_impact: String(rt.emotional_state_impact ?? ''),
+    };
+    parsed.reasoning_trace = rtTyped;
+  }
+  return parsed as GeminiDecision;
 }
 
 export async function compressMemory(

@@ -1,0 +1,29 @@
+{
+  "likes": [
+    {
+      "agentId": "0",
+      "viewerId": "viewer-1",
+      "likedAt": "2026-04-04T12:29:13.978Z"
+    },
+    {
+      "agentId": "0",
+      "viewerId": "viewer-dup",
+      "likedAt": "2026-04-04T12:29:33.239Z"
+    },
+    {
+      "agentId": "0",
+      "viewerId": "viewer-override",
+      "likedAt": "2026-04-04T12:36:43.912Z"
+    },
+    {
+      "agentId": "0",
+      "viewerId": "viewer-dup2",
+      "likedAt": "2026-04-04T12:39:20.759Z"
+    },
+    {
+      "agentId": "0",
+      "viewerId": "viewer-override-2",
+      "likedAt": "2026-04-04T12:39:47.999Z"
+    }
+  ]
+}

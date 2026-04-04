@@ -7,6 +7,10 @@ interface Props {
   width?: number
   height?: number
   events?: TickEvent[]
+  showEdgeLabels?: boolean
+  edgeLabelMinScale?: number
+  onScaleChange?: (scale: number) => void
+  onSelectAgent?: (agentId: string) => Promise<void>
 }
 
 interface TransitionArrow {
@@ -40,7 +44,17 @@ function getEmotionalEmoji(emotionalState: number): string {
   return '😊'
 }
 
-export default function AgentNetwork({ initData, latestTick, width = 520, height = 420, events = [] }: Props) {
+export default function AgentNetwork({ 
+  initData, 
+  latestTick, 
+  width = 520, 
+  height = 420, 
+  events = [],
+  showEdgeLabels: _showEdgeLabels,
+  edgeLabelMinScale: _edgeLabelMinScale,
+  onScaleChange,
+  onSelectAgent,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const pixelPositionsRef = useRef<Record<string, [number, number]>>({})
@@ -132,8 +146,9 @@ export default function AgentNetwork({ initData, latestTick, width = 520, height
 
   const resetView = useCallback(() => {
     setScale(1)
+    onScaleChange?.(1)
     setOffset({ x: 0, y: 0 })
-  }, [])
+  }, [onScaleChange])
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
@@ -146,8 +161,9 @@ export default function AgentNetwork({ initData, latestTick, width = 520, height
     const newOffsetX = mouseX - (mouseX - offset.x) * (newScale / scale)
     const newOffsetY = mouseY - (mouseY - offset.y) * (newScale / scale)
     setScale(newScale)
+    onScaleChange?.(newScale)
     setOffset({ x: newOffsetX, y: newOffsetY })
-  }, [scale, offset])
+  }, [scale, offset, onScaleChange])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 0) {
@@ -227,10 +243,11 @@ export default function AgentNetwork({ initData, latestTick, width = 520, height
           agent,
           stateHistory: stateHistoryRef.current[id] ?? [],
         })
+        onSelectAgent?.(id)
         return
       }
     }
-  }, [isDragging, scale, offset, initData, latestTick, agentMap])
+  }, [isDragging, scale, offset, initData, latestTick, agentMap, onSelectAgent])
 
   const networkMetrics = computeNetworkMetrics(initData)
 

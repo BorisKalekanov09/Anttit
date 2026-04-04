@@ -53,6 +53,8 @@ export interface EpisodicEntry {
   influence: string;
   impact: 'high' | 'low';
   createdAt?: string;
+  reasoning_trace?: ReasoningTrace;
+  confidence?: number;
 }
 
 export interface SimConfig {
@@ -176,6 +178,28 @@ export interface RelationshipUpdateMessage {
 
 export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage;
 
+export interface ReasoningTrace {
+  personality_influence: string;
+  memory_influence: string;
+  social_pressure: string;
+  emotional_state_impact: string;
+}
+
+export interface WorldConfig {
+  topic: string;
+  scenario_description: string;
+  agent_count: number;
+  key_concepts: string[];
+  personality_archetypes: PersonalityDef[];
+  initial_state_distribution: Record<string, number>;
+  suggested_config: {
+    theme: string;
+    agent_count: number;
+    topology: string;
+    tick_rate: number;
+  };
+}
+
 export interface SimState {
   simId: string;
   tick: number;
@@ -187,4 +211,5 @@ export interface SimState {
   history: TickMessage[];
   analysisReport: AnalysisReport | null;
   discussionFeed: DiscussionPost[];
+  relationships: Relationship[];
 }
