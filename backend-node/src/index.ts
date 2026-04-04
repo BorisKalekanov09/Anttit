@@ -13,6 +13,7 @@ import whatifRouter from './routes/whatif.js';
 import feedRouter from './routes/feed.js';
 import agentsRouter from './routes/agents.js';
 import worldBuilderRouter from './routes/worldBuilder.js';
+import configRouter from './routes/config.js';
 import { viewerIdMiddleware } from './middleware/viewerId.js';
 import { getSimulation } from './simulation/registry.js';
 
@@ -48,6 +49,7 @@ app.use('/api/simulations/:simId/whatif', whatifRouter);
 app.use('/api/simulations/:simId/feed', viewerIdMiddleware, feedRouter);
 app.use('/api/simulations/:simId/agents', viewerIdMiddleware, agentsRouter);
 app.use('/api/world-builder', worldBuilderRouter);
+app.use('/api/config', configRouter);
 
 const server = createServer(app);
 

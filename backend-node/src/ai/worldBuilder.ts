@@ -49,9 +49,17 @@ Theme meanings:
 
 Return ONLY valid JSON, no markdown.`;
 
-  const result = await defaultModel.generateContent(prompt);
-  const text = stripMarkdownFences(result.response.text());
-  return JSON.parse(text);
+  try {
+    const result = await defaultModel.generateContent(prompt);
+    const text = stripMarkdownFences(result.response.text());
+    return JSON.parse(text);
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error.message : String(error);
+    if (err.includes('RESOURCE_EXHAUSTED') || err.includes('quota') || err.includes('429')) {
+      throw new Error('RESOURCE_EXHAUSTED: Gemini API quota exceeded. Please try again in a few minutes.');
+    }
+    throw error;
+  }
 }
 
 export async function generatePersonalitiesForWorld(
@@ -77,20 +85,28 @@ Each personality must have:
 Ensure percentages sum to exactly 100.
 Return ONLY valid JSON array, no markdown.`;
 
-  const result = await defaultModel.generateContent(prompt);
-  const text = stripMarkdownFences(result.response.text());
-  const personalities: PersonalityDef[] = JSON.parse(text);
+  try {
+    const result = await defaultModel.generateContent(prompt);
+    const text = stripMarkdownFences(result.response.text());
+    const personalities: PersonalityDef[] = JSON.parse(text);
 
-  const total = personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);
-  if (total !== 100) {
-    personalities.forEach(p => {
-      p.suggested_percentage = Math.round((p.suggested_percentage * 100) / total);
-    });
-    const diff = 100 - personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);
-    personalities[0].suggested_percentage += diff;
+    const total = personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);
+    if (total !== 100) {
+      personalities.forEach(p => {
+        p.suggested_percentage = Math.round((p.suggested_percentage * 100) / total);
+      });
+      const diff = 100 - personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);
+      personalities[0].suggested_percentage += diff;
+    }
+
+    return personalities;
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error.message : String(error);
+    if (err.includes('RESOURCE_EXHAUSTED') || err.includes('quota') || err.includes('429')) {
+      throw new Error('RESOURCE_EXHAUSTED: Gemini API quota exceeded. Please try again in a few minutes.');
+    }
+    throw error;
   }
-
-  return personalities;
 }
 
 export function getDefaultStateDistribution(suggestedTheme: string): Record<string, number> {

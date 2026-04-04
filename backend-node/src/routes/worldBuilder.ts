@@ -16,13 +16,8 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
-    // Step 1: Generate world meta-config from topic (theme suggestion, concepts, etc.)
     const worldConfig = await generateWorldConfig(topic.trim());
-
-    // Step 2: Generate personalities tailored to the topic (parallel with nothing else)
     const personalities = await generatePersonalitiesForWorld(topic.trim(), worldConfig.key_concepts);
-
-    // Step 3: Get default state distribution for the suggested theme (no extra API call needed)
     const distribution = getDefaultStateDistribution(worldConfig.suggested_theme);
 
     res.json({
@@ -42,7 +37,11 @@ router.post('/generate', async (req, res) => {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[WorldBuilder] Error generating world config:', msg);
-    res.status(500).json({ error: msg });
+    
+    const isRateLimited = msg.includes('RESOURCE_EXHAUSTED');
+    const statusCode = isRateLimited ? 429 : 500;
+    
+    res.status(statusCode).json({ error: msg });
   }
 });
 

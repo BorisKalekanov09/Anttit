@@ -20,10 +20,18 @@ export default function WorldBuilder({ onGenerateConfig, onSkip }: WorldBuilderP
   const [error, setError] = useState('')
 
   const handleGenerate = async () => {
-    if (topic.trim().length < 5) {
+    const trimmedTopic = topic.trim()
+    
+    if (trimmedTopic.length === 0) {
+      setError('Please describe your scenario')
+      return
+    }
+    
+    if (trimmedTopic.length < 5) {
       setError('Please describe your scenario in at least a few words')
       return
     }
+    
     setError('')
     setGenerating(true)
     setPreview(null)
@@ -31,16 +39,29 @@ export default function WorldBuilder({ onGenerateConfig, onSkip }: WorldBuilderP
       const res = await fetch('/api/world-builder/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: topic.trim() }),
+        body: JSON.stringify({ topic: trimmedTopic }),
       })
+      
       if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Generation failed')
+        let errorMsg = 'Generation failed'
+        try {
+          const err = await res.json()
+          errorMsg = err.error || errorMsg
+          // Detect Gemini API rate limit
+          if (errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('quota') || res.status === 429) {
+            errorMsg = 'API quota exhausted. Please wait a few minutes before trying again.'
+          }
+        } catch {
+          errorMsg = `Server error (${res.status}). Please try again later.`
+        }
+        throw new Error(errorMsg)
       }
+      
       const config: WorldConfig = await res.json()
       setPreview(config)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to generate world config')
+      const message = e instanceof Error ? e.message : 'Failed to generate world config'
+      setError(message)
     } finally {
       setGenerating(false)
     }
@@ -68,7 +89,11 @@ export default function WorldBuilder({ onGenerateConfig, onSkip }: WorldBuilderP
             <textarea
               className="input"
               value={topic}
-              onChange={e => { setTopic(e.target.value); setError('') }}
+              onChange={e => {
+                const newValue = e.currentTarget.value
+                setTopic(newValue)
+                if (error) setError('')
+              }}
               placeholder="e.g., 'A tech community debating AI safety regulations, with researchers, entrepreneurs, and skeptics taking opposing sides'"
               rows={4}
               style={{ resize: 'vertical', lineHeight: 1.7, fontSize: 15 }}
