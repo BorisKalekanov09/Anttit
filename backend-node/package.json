@@ -6,7 +6,9 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsup src/index.ts --format esm --dts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:watch": "vitest --watch"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -25,6 +27,8 @@
     "@types/uuid": "^10.0.0",
     "@types/node": "^22.13.4",
     "tsx": "^4.19.2",
-    "tsup": "^8.3.6"
+    "tsup": "^8.3.6",
+    "vitest": "^1.0.0",
+    "ws": "^8.20.0"
   }
 }
