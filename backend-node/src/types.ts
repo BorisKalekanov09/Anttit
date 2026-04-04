@@ -52,6 +52,33 @@ export interface EpisodicEntry {
   event: string;           // "changed from X to Y because..."
   influence: string;       // which agent triggered this
   impact: 'high' | 'low';
+  createdAt?: string;      // ISO timestamp (real time, not epoch-based)
+}
+
+// ── Belief Types (Feature 7: Agent Beliefs & Actions) ─────────────────────
+
+export interface Belief {
+  topic: string;
+  weight: number;          // 0-1 range
+}
+
+export interface AgentProfile {
+  id: string;
+  role: AgentRole;
+  personality: string;
+  beliefs: Belief[];
+  profileLikes: number;
+  viewerHasLiked?: boolean;
+  narrativeSummary?: string;
+  relationships?: Relationship[];
+}
+
+export interface AgentAction {
+  id: string;
+  agentId: string;
+  actionType: 'like' | 'comment';
+  feedPostId?: string;
+  createdAt: string;       // ISO timestamp
 }
 
 // ── Theme Definition ──────────────────────────────────────────────────────
@@ -76,6 +103,7 @@ export interface InitMessage {
   state_colors: Record<string, string>;
   personalities: { name: string; color: string }[];
   theme: string;
+  agentProfiles?: AgentProfile[];
 }
 
 export interface TickEvent {
@@ -115,9 +143,80 @@ export interface AnalysisMessage {
   text?: string;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage;
+// ── Discussion Feed Types (Feature 6: Discussion Feed) ──────────────────
+
+export interface DiscussionComment {
+  id: string;
+  author: string;
+  author_type: 'user' | 'agent';
+  message: string;
+  created_at: string;       // ISO timestamp
+  agentId?: string;
+}
+
+export interface DiscussionPost {
+  id: string;
+  author: string;
+  author_type: 'user' | 'agent';
+  personality?: string;     // Optional personality name of the post author
+  content: string;
+  created_at: string;       // ISO timestamp
+  likes: number;
+  comments: DiscussionComment[];
+  agentId?: string;
+  tags?: string[];
+}
+
+export interface FeedUpdateMessage {
+  type: 'feed_update';
+  reason: 'new_post' | 'like' | 'comment';
+  posts: DiscussionPost[];
+}
+
+export interface FeedSnapshot {
+  posts: DiscussionPost[];
+  stats: {
+    totalPosts: number;
+    totalLikes: number;
+    totalComments: number;
+    updatedAt: string;
+  };
+}
+
+export interface BeliefUpdateMessage {
+  type: 'belief_update';
+  agentId: string;
+  beliefs: Belief[];
+}
+
+// ── Relationship Types (Feature X: Knowledge Graph Edges) ──────────────────────
+
+export type RelationshipType = 'RELATES_TO' | 'INFLUENCES' | 'DISAGREES_WITH' | 'SUPPORTS';
+
+export interface Relationship {
+  id: string;
+  simId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  type: RelationshipType;
+  strength: number;       // 0-1 range
+  narrative?: string;     // optional reason/explanation
+  createdAt?: string;     // ISO timestamp
+  updatedAt?: string;     // ISO timestamp
+}
+
+export interface RelationshipUpdateMessage {
+  type: 'relationship_update';
+  data: Relationship;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage;
 
 // ── API Request/Response Types ────────────────────────────────────────────
+
+export interface ProfileLikeRequest {
+  viewerId: string;
+}
 
 export interface LaunchRequest {
   theme: string;

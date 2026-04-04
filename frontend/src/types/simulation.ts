@@ -11,6 +11,32 @@ export interface PersonalityDef {
   color: string;
 }
 
+export type AgentRole = 'default' | 'influencer' | 'skeptic' | 'bot' | 'follower';
+
+export interface Belief {
+  topic: string;
+  weight: number;
+}
+
+export interface AgentProfile {
+  id: string;
+  role: AgentRole;
+  personality: string;
+  beliefs: Belief[];
+  profileLikes: number;
+  viewerHasLiked?: boolean;
+  narrativeSummary?: string;
+  relationships?: Relationship[];
+}
+
+export interface AgentAction {
+  id: string;
+  agentId: string;
+  actionType: 'like' | 'comment';
+  feedPostId?: string;
+  createdAt: string;
+}
+
 export interface ThemeDef {
   key: string;
   name: string;
@@ -19,6 +45,14 @@ export interface ThemeDef {
   difficulty: 'simple' | 'medium' | 'complex';
   emoji: string;
   state_colors: Record<string, string>;
+}
+
+export interface EpisodicEntry {
+  tick: number;
+  event: string;
+  influence: string;
+  impact: 'high' | 'low';
+  createdAt?: string;
 }
 
 export interface SimConfig {
@@ -48,6 +82,7 @@ export interface InitMessage {
   personalities: { name: string; color: string }[];
   theme: string;
   agents?: Agent[];
+  agentProfiles?: AgentProfile[];
 }
 
 export interface TickEvent {
@@ -86,7 +121,60 @@ export interface AnalysisMessage {
   report: AnalysisReport;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage;
+export interface DiscussionComment {
+  id: string;
+  author: string;
+  author_type: 'user' | 'agent';
+  message: string;
+  created_at: string;
+  agentId?: string;
+}
+
+export interface DiscussionPost {
+  id: string;
+  author: string;
+  author_type: 'user' | 'agent';
+  personality?: string;
+  content: string;
+  created_at: string;
+  likes: number;
+  comments: DiscussionComment[];
+  agentId?: string;
+  tags?: string[];
+}
+
+export interface FeedUpdateMessage {
+  type: 'feed_update';
+  reason: 'new_post' | 'like' | 'comment';
+  posts: DiscussionPost[];
+}
+
+export interface BeliefUpdateMessage {
+  type: 'belief_update';
+  agentId: string;
+  beliefs: Belief[];
+}
+
+export type RelationshipType = 'RELATES_TO' | 'INFLUENCES' | 'DISAGREES_WITH' | 'SUPPORTS';
+
+export interface Relationship {
+  id: string;
+  simId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  type: RelationshipType;
+  strength: number;
+  narrative?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RelationshipUpdateMessage {
+  type: 'relationship_update';
+  data: Relationship;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage;
 
 export interface SimState {
   simId: string;
@@ -98,4 +186,5 @@ export interface SimState {
   events: TickEvent[];
   history: TickMessage[];
   analysisReport: AnalysisReport | null;
+  discussionFeed: DiscussionPost[];
 }
