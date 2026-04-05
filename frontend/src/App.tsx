@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast'
 import ConfigPage from './pages/ConfigPage'
 import LivePage from './pages/LivePage'
 import AnalysisPage from './pages/AnalysisPage'
+import SettingsPage from './pages/SettingsPage'
 import { AppShell } from './components/AppShell'
 import './index.css'
 
@@ -32,6 +33,7 @@ export default function App() {
         />
         <Route path="/live/:simId" element={<LivePage />} />
         <Route path="/analysis/:simId" element={<AnalysisPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </BrowserRouter>
   )

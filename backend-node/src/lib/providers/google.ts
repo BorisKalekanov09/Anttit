@@ -13,12 +13,15 @@ export class GoogleProvider extends BaseProvider {
   }
 
   async validateConnection(): Promise<ProviderValidationResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`,
         {
           method: 'GET',
-          timeout: 10000,
+          signal: controller.signal,
         }
       );
 
@@ -42,6 +45,8 @@ export class GoogleProvider extends BaseProvider {
         valid: false,
         error: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -54,6 +59,9 @@ export class GoogleProvider extends BaseProvider {
     }
   ): Promise<ProviderResponse> {
     this.validateModelId(modelId);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch(
@@ -68,7 +76,7 @@ export class GoogleProvider extends BaseProvider {
               maxOutputTokens: options?.maxTokens ?? 2048,
             },
           }),
-          timeout: 60000,
+          signal: controller.signal,
         }
       );
 
@@ -101,6 +109,8 @@ export class GoogleProvider extends BaseProvider {
     } catch (error) {
       this.logError('Generation failed', error);
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

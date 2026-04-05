@@ -13,13 +13,16 @@ export class GroqProvider extends BaseProvider {
   }
 
   async validateConnection(): Promise<ProviderValidationResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const response = await fetch(`${this.baseUrl}/models`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
         },
-        timeout: 10000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -42,6 +45,8 @@ export class GroqProvider extends BaseProvider {
         valid: false,
         error: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -54,6 +59,9 @@ export class GroqProvider extends BaseProvider {
     }
   ): Promise<ProviderResponse> {
     this.validateModelId(modelId);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -68,7 +76,7 @@ export class GroqProvider extends BaseProvider {
           temperature: options?.temperature ?? 0.7,
           max_tokens: options?.maxTokens ?? 2048,
         }),
-        timeout: 30000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -94,6 +102,8 @@ export class GroqProvider extends BaseProvider {
     } catch (error) {
       this.logError('Generation failed', error);
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

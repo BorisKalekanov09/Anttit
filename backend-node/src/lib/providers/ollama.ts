@@ -4,6 +4,7 @@ import type { ModelInfo } from '../model-registry.js';
 
 export class OllamaProvider extends BaseProvider {
   provider = 'ollama' as const;
+  apiKey?: string;
   baseUrl: string;
   modelName: string;
 
@@ -14,10 +15,13 @@ export class OllamaProvider extends BaseProvider {
   }
 
   async validateConnection(): Promise<ProviderValidationResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     try {
       const response = await fetch(`${this.baseUrl}/api/tags`, {
         method: 'GET',
-        timeout: 5000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -43,6 +47,8 @@ export class OllamaProvider extends BaseProvider {
         valid: false,
         error: `Failed to connect to Ollama at ${this.baseUrl}: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -54,6 +60,9 @@ export class OllamaProvider extends BaseProvider {
       maxTokens?: number;
     }
   ): Promise<ProviderResponse> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+
     try {
       const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
@@ -65,7 +74,7 @@ export class OllamaProvider extends BaseProvider {
           temperature: options?.temperature ?? 0.7,
           num_predict: options?.maxTokens ?? 1024,
         }),
-        timeout: 120000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -88,6 +97,8 @@ export class OllamaProvider extends BaseProvider {
     } catch (error) {
       this.logError('Generation failed', error);
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

@@ -1,5 +1,5 @@
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 interface AppShellProps {
   children: React.ReactNode
@@ -9,6 +9,8 @@ interface AppShellProps {
 
 export const AppShell: React.FC<AppShellProps> = ({ children, title, showBackButton = false }) => {
   const navigate = useNavigate()
+  const location = useLocation()
+  const isSettingsPage = location.pathname === '/settings'
 
   return (
     <div className="flex flex-col h-screen bg-[var(--bg-void)]">
@@ -26,6 +28,27 @@ export const AppShell: React.FC<AppShellProps> = ({ children, title, showBackBut
           )}
           {title && <h1 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h1>}
         </div>
+
+        {!isSettingsPage && (
+          <button
+            onClick={() => navigate('/settings')}
+            className="btn-secondary"
+            style={{ padding: '8px 16px', fontSize: 13 }}
+            title="Configure AI providers"
+          >
+            ⚙️ Settings
+          </button>
+        )}
+        {isSettingsPage && (
+          <button
+            onClick={() => navigate('/')}
+            className="btn-secondary"
+            style={{ padding: '8px 16px', fontSize: 13 }}
+            title="Back to simulator"
+          >
+            ← Back
+          </button>
+        )}
       </header>
 
       {/* Scrollable Content Area */}

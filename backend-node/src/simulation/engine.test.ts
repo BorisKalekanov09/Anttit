@@ -6,11 +6,14 @@ describe('SimulationEngine', () => {
   it('should create a SimulationEngine instance', () => {
     const config: SimulationConfig = {
       theme: 'rumor',
-      agent_count: 10,
+      agentCount: 10,
       topology: 'small_world',
-      tick_rate: 0.5,
+      tickRate: 0.5,
       personalities: [],
-      seed: 'test',
+      simId: 'test-sim',
+      modelName: 'gemini-2.0-flash-lite',
+      aiAgentsPerTick: 5,
+      seedText: 'test',
     };
     
     const engine = new SimulationEngine(config);
@@ -21,11 +24,14 @@ describe('SimulationEngine', () => {
   it('should have a tick method', () => {
     const config: SimulationConfig = {
       theme: 'rumor',
-      agent_count: 10,
+      agentCount: 10,
       topology: 'small_world',
-      tick_rate: 0.5,
+      tickRate: 0.5,
       personalities: [],
-      seed: 'test',
+      simId: 'test-sim',
+      modelName: 'gemini-2.0-flash-lite',
+      aiAgentsPerTick: 5,
+      seedText: 'test',
     };
     
     const engine = new SimulationEngine(config);

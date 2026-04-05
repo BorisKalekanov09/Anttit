@@ -13,6 +13,9 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   async validateConnection(): Promise<ProviderValidationResult> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const response = await fetch(`${this.baseUrl}/messages`, {
         method: 'POST',
@@ -26,7 +29,7 @@ export class AnthropicProvider extends BaseProvider {
           max_tokens: 10,
           messages: [{ role: 'user', content: 'test' }],
         }),
-        timeout: 10000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -50,6 +53,8 @@ export class AnthropicProvider extends BaseProvider {
         valid: false,
         error: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -62,6 +67,9 @@ export class AnthropicProvider extends BaseProvider {
     }
   ): Promise<ProviderResponse> {
     this.validateModelId(modelId);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch(`${this.baseUrl}/messages`, {
@@ -77,7 +85,7 @@ export class AnthropicProvider extends BaseProvider {
           messages: [{ role: 'user', content: prompt }],
           temperature: options?.temperature ?? 0.7,
         }),
-        timeout: 60000,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -105,6 +113,8 @@ export class AnthropicProvider extends BaseProvider {
     } catch (error) {
       this.logError('Generation failed', error);
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

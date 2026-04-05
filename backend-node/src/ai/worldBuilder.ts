@@ -1,11 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from 'dotenv';
+import type { BaseProvider } from '../lib/providers/base.js';
 import type { PersonalityDef } from '../types.js';
-
-config();
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const defaultModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
 function stripMarkdownFences(text: string): string {
   let cleaned = text.trim();
@@ -28,7 +22,11 @@ export interface WorldConfigRaw {
   suggested_theme: string;
 }
 
-export async function generateWorldConfig(topic: string): Promise<WorldConfigRaw> {
+export async function generateWorldConfig(
+  provider: BaseProvider,
+  modelId: string,
+  topic: string
+): Promise<WorldConfigRaw> {
   const prompt = `You are designing a multi-agent simulation world.
 
 User's topic: "${topic}"
@@ -50,19 +48,20 @@ Theme meanings:
 Return ONLY valid JSON, no markdown.`;
 
   try {
-    const result = await defaultModel.generateContent(prompt);
-    const text = stripMarkdownFences(result.response.text());
+    const result = await provider.generateCompletion(prompt, modelId, {
+      temperature: 0.7,
+      maxTokens: 1200,
+    });
+    const text = stripMarkdownFences(result.content);
     return JSON.parse(text);
   } catch (error: unknown) {
-    const err = error instanceof Error ? error.message : String(error);
-    if (err.includes('RESOURCE_EXHAUSTED') || err.includes('quota') || err.includes('429')) {
-      throw new Error('RESOURCE_EXHAUSTED: Gemini API quota exceeded. Please try again in a few minutes.');
-    }
     throw error;
   }
 }
 
 export async function generatePersonalitiesForWorld(
+  provider: BaseProvider,
+  modelId: string,
   topic: string,
   concepts: string[]
 ): Promise<PersonalityDef[]> {
@@ -86,8 +85,11 @@ Ensure percentages sum to exactly 100.
 Return ONLY valid JSON array, no markdown.`;
 
   try {
-    const result = await defaultModel.generateContent(prompt);
-    const text = stripMarkdownFences(result.response.text());
+    const result = await provider.generateCompletion(prompt, modelId, {
+      temperature: 0.8,
+      maxTokens: 1500,
+    });
+    const text = stripMarkdownFences(result.content);
     const personalities: PersonalityDef[] = JSON.parse(text);
 
     const total = personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);
@@ -101,10 +103,6 @@ Return ONLY valid JSON array, no markdown.`;
 
     return personalities;
   } catch (error: unknown) {
-    const err = error instanceof Error ? error.message : String(error);
-    if (err.includes('RESOURCE_EXHAUSTED') || err.includes('quota') || err.includes('429')) {
-      throw new Error('RESOURCE_EXHAUSTED: Gemini API quota exceeded. Please try again in a few minutes.');
-    }
     throw error;
   }
 }

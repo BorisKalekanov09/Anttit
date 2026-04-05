@@ -52,14 +52,46 @@ export default function ConfigPage() {
   return (
     <AppShell title="Configure Simulation">
       <div className="page-enter" style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
-        <div className="glass slide-up" style={{ padding: '32px', minHeight: 400 }}>
+        <div
+          className="glass slide-up"
+          style={{
+            padding: '32px',
+            minHeight: 400,
+            background: 'linear-gradient(135deg, rgba(124,109,250,0.05) 0%, rgba(59,130,246,0.05) 100%)',
+            border: '1px solid var(--border-bright)',
+          }}
+        >
           {step === 'builder' ? (
-            <WorldBuilder
-              onGenerateConfig={handleWorldBuilderConfig}
-              onSkip={() => {
-                toast.error('Please describe a scenario to continue')
-              }}
-            />
+            <>
+              <div
+                style={{
+                  marginBottom: 24,
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>💡</span>
+                <div>
+                  <strong>Tip:</strong> Want to use a different AI provider (OpenAI, Anthropic, Google, etc.)?
+                  Go to <strong>⚙️ Settings</strong> in the top right to configure your API keys and choose which models
+                  to use for world generation and agent decisions.
+                </div>
+              </div>
+
+              <WorldBuilder
+                onGenerateConfig={handleWorldBuilderConfig}
+                onSkip={() => {
+                  toast.error('Please describe a scenario to continue')
+                }}
+              />
+            </>
           ) : (
             <GeneratedConfigApproval
               config={config}
