@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage, DirectMessage, AgentGroup, GroupMessage } from '../types/simulation'
+import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage, DirectMessage, AgentGroup, GroupMessage, ConversationLog, CausalChain } from '../types/simulation'
 
 // Re-export for consumers
 export type { DirectMessage, AgentGroup, GroupMessage }
@@ -41,6 +41,8 @@ export function useSimulation(simId: string | undefined) {
     totalTokensUsed: totalTokensUsedRef.current,
     groups: [],
     directMessages: [],
+    conversations: [],
+    latestAdvancedMetrics: null,
   })
 
   const trackApiCall = useCallback((tokensUsed: number = 0) => {
@@ -74,6 +76,7 @@ export function useSimulation(simId: string | undefined) {
           latestTick: tick,
           events: [...tick.events, ...s.events].slice(0, 200),
           history: [...s.history, tick].slice(-2000),
+          latestAdvancedMetrics: tick.advancedMetrics ?? s.latestAdvancedMetrics,
         }))
       } else if (msg.type === 'analysis') {
         const analysisMsg = msg as AnalysisMessage
@@ -107,6 +110,11 @@ export function useSimulation(simId: string | undefined) {
         }))
       } else if (msg.type === 'group_update') {
         setState(s => ({ ...s, groups: msg.groups }))
+      } else if (msg.type === 'conversation_update') {
+        setState(s => ({
+          ...s,
+          conversations: [...s.conversations, msg.conversation].slice(-200),
+        }))
       }
     }
 
@@ -334,6 +342,51 @@ export function useSimulation(simId: string | undefined) {
     }
   }, [simId])
 
+  const fetchCausalChain = useCallback(async (agentId: string): Promise<CausalChain | null> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/agents/${agentId}/causal-chain`)
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }, [simId])
+
+  const fetchConversations = useCallback(async (agentAId?: string, agentBId?: string): Promise<ConversationLog[]> => {
+    try {
+      const url = agentAId && agentBId
+        ? `/api/simulations/${simId}/conversations/${agentAId}/${agentBId}`
+        : `/api/simulations/${simId}/conversations`
+      const res = await fetch(url)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.conversations ?? []
+    } catch {
+      return []
+    }
+  }, [simId])
+
+  const assignExperimentGroups = useCallback(async (treatmentFraction: number): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/experiment/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ treatmentFraction }),
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }, [simId])
+
+  const injectTargeted = useCallback(async (group: 'control' | 'treatment', fraction: number, state?: string): Promise<void> => {
+    await fetch(`/api/simulations/${simId}/inject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_type: 'targeted_injection', payload: { group, fraction, state } }),
+    })
+  }, [simId])
+
   return {
     state,
     control,
@@ -352,5 +405,9 @@ export function useSimulation(simId: string | undefined) {
     sendGroupMessage,
     joinGroup,
     leaveGroup,
+    fetchCausalChain,
+    fetchConversations,
+    assignExperimentGroups,
+    injectTargeted,
   }
 }

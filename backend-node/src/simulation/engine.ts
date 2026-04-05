@@ -23,6 +23,12 @@ import type {
   AgentGroup,
   GroupMessage,
   GroupUpdateMessage,
+  ConversationLog,
+  ConversationUpdateMessage,
+  AdvancedMetrics,
+  ExperimentGroup,
+  CausalChain,
+  CausalStep,
 } from '../types.js';
 import { Agent, createAgent, addMemory, addEpisodicMemory, getTraits, applyRoleModifiers, canCompressMemory, canBecomeResistant } from './agent.js';
 import { buildGraph, computePositions, getEdgeList, TopologyType } from './topology.js';
@@ -32,6 +38,7 @@ import { addLike, addComment, readFeed, appendPost } from '../store/feedStore.js
 import { graphDb } from '../db/graphDb.js';
 import { appendDM } from '../store/dmStore.js';
 import { getGroups, createGroup, addMember, removeMember as removeGroupMember, appendGroupMessage, findExistingGroup } from '../store/groupStore.js';
+import { appendConversation, getConversations } from '../store/conversationStore.js';
 
 export class SimulationEngine {
   config: SimulationConfig;
@@ -51,6 +58,7 @@ export class SimulationEngine {
   intervalHandle: ReturnType<typeof setInterval> | null;
   apiCallCount: number;
   totalTokensUsed: number;
+  spreadSpeedTick: number | null;   // tick when seed state first reached 50% of agents
 
   constructor(config: SimulationConfig) {
     this.config = config;
@@ -70,6 +78,7 @@ export class SimulationEngine {
     this.intervalHandle = null;
     this.apiCallCount = 0;
     this.totalTokensUsed = 0;
+    this.spreadSpeedTick = null;
   }
 
   async build(): Promise<InitMessage> {
@@ -689,6 +698,20 @@ export class SimulationEngine {
           agent.state = recoveryState;
         }
       }
+    } else if (eventType === 'assign_experiment_groups') {
+      const treatmentFraction = (ev.treatmentFraction as number) || 0.5;
+      this.assignExperimentGroups(treatmentFraction);
+    } else if (eventType === 'targeted_injection') {
+      // Only affects treatment group agents (control group is untouched)
+      const fraction = (ev.fraction as number) || 0.1;
+      const targetGroup: ExperimentGroup = (ev.group as ExperimentGroup) || 'treatment';
+      const targetState = (ev.state as string) || this.theme.SEED_STATE || this.theme.VALID_STATES[1];
+      const eligible = Array.from(this.agents.values()).filter(a => a.experimentGroup === targetGroup);
+      const count = Math.max(1, Math.floor(eligible.length * fraction));
+      const selected = this.sampleArray(eligible, count);
+      for (const agent of selected) {
+        agent.state = targetState;
+      }
     } else if (eventType === 'network_split') {
       const edgesToRemove = Math.floor(this.graph.size * 0.1);
       const edges = this.graph.edges();
@@ -737,6 +760,15 @@ export class SimulationEngine {
       nodeStates[aid] = agent.state;
     }
 
+    // Track spread speed: first tick seed state reaches 50%
+    const seedState = this.theme.SEED_STATE || this.theme.VALID_STATES[1];
+    if (this.spreadSpeedTick === null && seedState) {
+      const seedCount = stateCounts[seedState] ?? 0;
+      if (seedCount / this.agents.size >= 0.5) {
+        this.spreadSpeedTick = this.tick;
+      }
+    }
+
     return {
       type: 'tick',
       tick: this.tick,
@@ -745,7 +777,121 @@ export class SimulationEngine {
       events: tickEvents.slice(-10),
       node_states: nodeStates,
       total_agents: this.agents.size,
+      advancedMetrics: this.computeAdvancedMetrics(stateCounts),
     };
+  }
+
+  private computeAdvancedMetrics(stateCounts: Record<string, number>): AdvancedMetrics {
+    const total = this.agents.size;
+    if (total === 0) {
+      return { polarizationIndex: 0, echoChamberScore: 0, spreadSpeed: null, influenceCentrality: {} };
+    }
+
+    // Polarization index: based on variance of state distribution (0=uniform, 1=fully polarized)
+    const fractions = Object.values(stateCounts).map(c => c / total);
+    const mean = fractions.reduce((s, f) => s + f, 0) / fractions.length;
+    const variance = fractions.reduce((s, f) => s + (f - mean) ** 2, 0) / fractions.length;
+    const maxVariance = ((fractions.length - 1) / fractions.length) * (1 / fractions.length);
+    const polarizationIndex = maxVariance > 0 ? Math.min(1, variance / maxVariance) : 0;
+
+    // Echo chamber score: fraction of graph edges that connect same-state agents
+    const edges = this.graph.edges();
+    let sameStateEdges = 0;
+    for (const edge of edges) {
+      const [src, tgt] = this.graph.extremities(edge);
+      const srcState = this.agents.get(src)?.state;
+      const tgtState = this.agents.get(tgt)?.state;
+      if (srcState && tgtState && srcState === tgtState) sameStateEdges++;
+    }
+    const echoChamberScore = edges.length > 0 ? sameStateEdges / edges.length : 0;
+
+    // Influence centrality: proportion of relationships where agent is source (normalised 0-1)
+    const relationships = graphDb.getRelationshipsForSim(this.config.simId);
+    const influenceCount: Record<string, number> = {};
+    for (const rel of relationships) {
+      influenceCount[rel.sourceAgentId] = (influenceCount[rel.sourceAgentId] ?? 0) + rel.strength;
+    }
+    const maxScore = Math.max(1, ...Object.values(influenceCount));
+    const influenceCentrality: Record<string, number> = {};
+    for (const [aid, score] of Object.entries(influenceCount)) {
+      influenceCentrality[aid] = score / maxScore;
+    }
+
+    // Group metrics (control vs treatment)
+    const controlStateCounts: Record<string, number> = {};
+    const treatmentStateCounts: Record<string, number> = {};
+    let hasGroups = false;
+    for (const agent of this.agents.values()) {
+      if (agent.experimentGroup === 'control') {
+        hasGroups = true;
+        controlStateCounts[agent.state] = (controlStateCounts[agent.state] ?? 0) + 1;
+      } else if (agent.experimentGroup === 'treatment') {
+        hasGroups = true;
+        treatmentStateCounts[agent.state] = (treatmentStateCounts[agent.state] ?? 0) + 1;
+      }
+    }
+
+    return {
+      polarizationIndex: Math.round(polarizationIndex * 1000) / 1000,
+      echoChamberScore: Math.round(echoChamberScore * 1000) / 1000,
+      spreadSpeed: this.spreadSpeedTick,
+      influenceCentrality,
+      groupMetrics: hasGroups ? { controlStateCounts, treatmentStateCounts } : undefined,
+    };
+  }
+
+  /** Build a causal chain for an agent from its episodic memory */
+  buildCausalChain(agentId: string): CausalChain | null {
+    const agent = this.agents.get(agentId);
+    if (!agent) return null;
+
+    const steps: CausalStep[] = agent.episodicMemory.map(e => ({
+      tick: e.tick,
+      type: 'state_change' as const,
+      description: `${e.event}${e.influence !== 'neighbors' && e.influence !== 'passive' ? ` (influenced by agent ${e.influence})` : ''}`,
+      agentId,
+      agentName: agent.personality.name,
+      impact: e.impact,
+    }));
+
+    // Splice in action log entries (posts/comments) as causal events
+    for (const action of agent.actionLog) {
+      const actionDate = new Date(action.createdAt);
+      // Find the nearest tick via metricsHistory timestamps (approximate)
+      steps.push({
+        tick: 0, // best-effort — no tick stored on actions
+        type: action.actionType === 'like' ? 'post' : 'comment',
+        description: `Agent performed a ${action.actionType}`,
+        agentId,
+        agentName: agent.personality.name,
+        impact: 'low',
+      });
+    }
+
+    steps.sort((a, b) => a.tick - b.tick);
+
+    // Build narrative summary
+    const stateChanges = steps.filter(s => s.type === 'state_change');
+    const summary = stateChanges.length > 0
+      ? `${agent.personality.name} went through ${stateChanges.length} state change(s). Final state: ${agent.state}.`
+      : `${agent.personality.name} remained in state "${agent.state}" throughout.`;
+
+    return { agentId, finalState: agent.state, steps, summary };
+  }
+
+  /** Assign experiment groups to agents */
+  assignExperimentGroups(treatmentFraction: number): void {
+    const agentIds = Array.from(this.agents.keys());
+    this.shuffleArray(agentIds);
+    const treatmentCount = Math.round(agentIds.length * treatmentFraction);
+    for (let i = 0; i < agentIds.length; i++) {
+      this.agents.get(agentIds[i])!.experimentGroup = i < treatmentCount ? 'treatment' : 'control';
+    }
+  }
+
+  /** Get all stored conversations */
+  async getConversationLogs(): Promise<ConversationLog[]> {
+    return getConversations(this.config.simId);
   }
 
   snapshot(): {
@@ -906,14 +1052,13 @@ export class SimulationEngine {
   }
 
   /**
-   * Agents with any relationship occasionally send DMs.
-   * Falls back to neighbor-pair sampling when no tracked relationships exist.
-   * We sample a few pairs per check to avoid flooding.
+   * Simulate real conversations between agent pairs.
+   * Each conversation is multi-turn, AI-generated, and can produce relationship updates
+   * and state changes — replacing the old template-based DM system.
    */
   private async performAutoDMs(): Promise<void> {
     try {
       const relationships = graphDb.getRelationshipsForSim(this.config.simId);
-      // Lower threshold to 0.3 so early-sim relationships qualify too
       let strong = relationships.filter(r => r.strength >= 0.3 && r.type !== 'RELATES_TO');
 
       // Fallback: if no tracked relationships yet, use neighbor pairs
@@ -937,44 +1082,128 @@ export class SimulationEngine {
         }
       }
 
-      // Pick up to 5 random relationships to generate DMs
-      const candidates = strong.sort(() => Math.random() - 0.5).slice(0, 5);
+      // Pick up to 3 pairs to converse per tick-group (conversations are expensive)
+      const candidates = strong.sort(() => Math.random() - 0.5).slice(0, 3);
 
       for (const rel of candidates) {
-        if (Math.random() > 0.65) continue; // 65% chance per candidate
+        if (Math.random() > 0.65) continue;
 
-        const sender = this.agents.get(rel.sourceAgentId);
-        const receiver = this.agents.get(rel.targetAgentId);
-        if (!sender || !receiver) continue;
+        const agentA = this.agents.get(rel.sourceAgentId);
+        const agentB = this.agents.get(rel.targetAgentId);
+        if (!agentA || !agentB) continue;
 
+        try {
+          // Simulate a real multi-turn conversation via AI
+          const conv = await gemini.simulateConversation(
+            agentA.agentId, agentA.personality.name, agentA.state, agentA.personality.description, getTraits(agentA),
+            agentB.agentId, agentB.personality.name, agentB.state, agentB.personality.description, getTraits(agentB),
+            this.theme.THEME_NAME,
+            this.theme.VALID_STATES,
+            this.config.modelName
+          );
+          this.trackApiCall(0, 'conversation');
+
+          // Persist each turn as a DM so existing UI shows them
+          for (const msg of conv.messages) {
+            const isFromA = msg.agentId === agentA.agentId;
+            const sender = isFromA ? agentA : agentB;
+            const receiver = isFromA ? agentB : agentA;
+            const dm: DirectMessage = {
+              id: uuidv4(),
+              simId: this.config.simId,
+              fromAgentId: sender.agentId,
+              toAgentId: receiver.agentId,
+              fromAuthor: sender.personality.name,
+              toAuthor: receiver.personality.name,
+              content: msg.content,
+              createdAt: new Date().toISOString(),
+            };
+            await appendDM(this.config.simId, dm);
+            this.emitDMUpdate(dm);
+          }
+
+          // Store full conversation log
+          const convLog: ConversationLog = {
+            id: uuidv4(),
+            simId: this.config.simId,
+            tick: this.tick,
+            agentAId: agentA.agentId,
+            agentBId: agentB.agentId,
+            agentAName: agentA.personality.name,
+            agentBName: agentB.personality.name,
+            messages: conv.messages,
+            influenceImpact: conv.influenceImpact,
+            derivedRelationshipType: conv.derivedRelationshipType,
+            stateChange: conv.stateChange,
+            createdAt: new Date().toISOString(),
+          };
+          await appendConversation(this.config.simId, convLog);
+
+          // Emit conversation update for frontend
+          const convMsg: ConversationUpdateMessage = { type: 'conversation_update', conversation: convLog };
+          this.emit(convMsg);
+
+          // Update relationship based on actual conversation outcome
+          const newStrength = Math.min(1, rel.strength + conv.influenceImpact * 0.4);
+          const updatedRel = await graphDb.recordRelationship(
+            this.config.simId,
+            agentA.agentId,
+            agentB.agentId,
+            conv.derivedRelationshipType,
+            newStrength,
+            `Conversation at tick ${this.tick}`,
+            this.tick
+          );
+          this.emit({ type: 'relationship_update', data: updatedRel } as RelationshipUpdateMessage);
+
+          // Apply state change if the conversation drove a belief shift
+          if (conv.stateChange && this.theme.VALID_STATES.includes(conv.stateChange.newState)) {
+            const { agentId, fromState, newState, reason } = conv.stateChange;
+            const affectedAgent = this.agents.get(agentId);
+            if (affectedAgent && affectedAgent.state === fromState) {
+              affectedAgent.state = newState;
+              this.updateBeliefsForTransition(affectedAgent, fromState, newState);
+              this.emit({ type: 'belief_update', agentId, beliefs: affectedAgent.beliefs } as BeliefUpdateMessage);
+              addMemory(affectedAgent, `Tick ${this.tick}: conversation with ${agentId === agentA.agentId ? agentB.personality.name : agentA.personality.name} shifted view — ${reason}`);
+              addEpisodicMemory(affectedAgent, {
+                tick: this.tick,
+                event: `changed from ${fromState} to ${newState} via conversation`,
+                influence: agentId === agentA.agentId ? agentB.agentId : agentA.agentId,
+                impact: conv.influenceImpact > 0.5 ? 'high' : 'low',
+              });
+            }
+          }
+
+          continue; // skip old template fallback
+        } catch {
+          // Quota or error — fall through to template-based DM
+        }
+
+        // Template fallback (no AI quota available)
         const dmTemplates: Record<string, string[]> = {
           INFLUENCES: [
-            `Hey, I noticed you've been thinking about ${receiver.state} too. We should talk.`,
-            `I believe ${sender.state} is the right path. Have you considered it?`,
-            `Just wanted to check in — I think we're aligned on this.`,
+            `Hey, I noticed you've been thinking about ${agentB.state} too. We should talk.`,
+            `I believe ${agentA.state} is the right path. Have you considered it?`,
           ],
           SUPPORTS: [
-            `Glad we're on the same page about ${sender.state}.`,
+            `Glad we're on the same page about ${agentA.state}.`,
             `Your perspective on this really resonated with me.`,
-            `We should coordinate — our views align closely.`,
           ],
           DISAGREES_WITH: [
-            `I fundamentally disagree with your stance on ${receiver.state}.`,
+            `I fundamentally disagree with your stance on ${agentB.state}.`,
             `Can we talk? I think you're missing something important here.`,
-            `Our views are very different — maybe worth a direct conversation.`,
           ],
         };
-
         const templates = dmTemplates[rel.type] ?? dmTemplates['INFLUENCES'];
         const content = templates[Math.floor(Math.random() * templates.length)];
 
         const dm: DirectMessage = {
           id: uuidv4(),
           simId: this.config.simId,
-          fromAgentId: sender.agentId,
-          toAgentId: receiver.agentId,
-          fromAuthor: sender.personality.name,
-          toAuthor: receiver.personality.name,
+          fromAgentId: agentA.agentId,
+          toAgentId: agentB.agentId,
+          fromAuthor: agentA.personality.name,
+          toAuthor: agentB.personality.name,
           content,
           createdAt: new Date().toISOString(),
         };

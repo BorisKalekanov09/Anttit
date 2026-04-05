@@ -99,6 +99,17 @@ export interface TickEvent {
   emotionalState?: number;
 }
 
+export interface AdvancedMetrics {
+  polarizationIndex: number;
+  echoChamberScore: number;
+  spreadSpeed: number | null;
+  influenceCentrality: Record<string, number>;
+  groupMetrics?: {
+    controlStateCounts: Record<string, number>;
+    treatmentStateCounts: Record<string, number>;
+  };
+}
+
 export interface TickMessage {
   type: 'tick';
   tick: number;
@@ -109,6 +120,7 @@ export interface TickMessage {
   total_agents: number;
   role_breakdown?: Record<string, number>;
   agents?: Agent[];
+  advancedMetrics?: AdvancedMetrics;
 }
 
 export interface AnalysisReport {
@@ -184,7 +196,61 @@ export interface ApiCallMessage {
   reason?: string;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage;
+// ── Conversation Types ────────────────────────────────────────────────────
+
+export type ExperimentGroup = 'control' | 'treatment' | 'none';
+
+export interface ConversationMessage {
+  agentId: string;
+  agentName: string;
+  content: string;
+  turn: number;
+}
+
+export interface ConversationLog {
+  id: string;
+  simId: string;
+  tick: number;
+  agentAId: string;
+  agentBId: string;
+  agentAName: string;
+  agentBName: string;
+  messages: ConversationMessage[];
+  influenceImpact: number;
+  derivedRelationshipType: RelationshipType;
+  stateChange?: {
+    agentId: string;
+    fromState: string;
+    newState: string;
+    reason: string;
+  };
+  createdAt: string;
+}
+
+export interface ConversationUpdateMessage {
+  type: 'conversation_update';
+  conversation: ConversationLog;
+}
+
+// ── Causal Chain ──────────────────────────────────────────────────────────
+
+export interface CausalStep {
+  tick: number;
+  type: 'post' | 'comment' | 'conversation' | 'belief_shift' | 'state_change';
+  description: string;
+  agentId?: string;
+  agentName?: string;
+  impact: 'high' | 'low';
+}
+
+export interface CausalChain {
+  agentId: string;
+  finalState: string;
+  steps: CausalStep[];
+  summary: string;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage | ConversationUpdateMessage;
 
 // ── Direct Messages ───────────────────────────────────────────────────────
 
@@ -271,4 +337,6 @@ export interface SimState {
   totalTokensUsed: number;
   groups: AgentGroup[];
   directMessages: DirectMessage[];
+  conversations: ConversationLog[];
+  latestAdvancedMetrics: AdvancedMetrics | null;
 }

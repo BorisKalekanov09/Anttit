@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from 'dotenv';
-import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry, ReasoningTrace } from '../types.js';
+import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry, ReasoningTrace, RelationshipType, ConversationMessage } from '../types.js';
 import { createProvider } from '../lib/providers/factory.js';
 import type { ProviderType } from '../lib/model-registry.js';
 import { configManager } from '../lib/config-manager.js';
@@ -530,6 +530,116 @@ Return ONLY this exact JSON (no markdown, no extra text):
     }
     
     throw error;
+  }
+}
+
+/**
+ * Simulates a multi-turn conversation between two agents.
+ * Returns the message log, the influence impact, the derived relationship type,
+ * and an optional state change recommendation for either agent.
+ */
+export async function simulateConversation(
+  agentAId: string,
+  agentAName: string,
+  agentAState: string,
+  agentADesc: string,
+  agentATraits: { credulity?: number; influence?: number; stubbornness?: number },
+  agentBId: string,
+  agentBName: string,
+  agentBState: string,
+  agentBDesc: string,
+  agentBTraits: { credulity?: number; influence?: number; stubbornness?: number },
+  theme: string,
+  validStates: string[],
+  modelName?: string
+): Promise<{
+  messages: ConversationMessage[];
+  influenceImpact: number;
+  derivedRelationshipType: RelationshipType;
+  stateChange?: { agentId: string; fromState: string; newState: string; reason: string };
+}> {
+  const { provider: providerType, modelId } = parseModelName(modelName);
+  const statesStr = validStates.join(', ');
+
+  const prompt = `You are simulating a direct conversation between two agents in a "${theme}" simulation.
+
+Agent A: ${agentAName} (state: ${agentAState})
+  - Description: ${agentADesc}
+  - Credulity: ${agentATraits.credulity ?? 50}/100, Stubbornness: ${agentATraits.stubbornness ?? 50}/100, Influence: ${agentATraits.influence ?? 50}/100
+
+Agent B: ${agentBName} (state: ${agentBState})
+  - Description: ${agentBDesc}
+  - Credulity: ${agentBTraits.credulity ?? 50}/100, Stubbornness: ${agentBTraits.stubbornness ?? 50}/100, Influence: ${agentBTraits.influence ?? 50}/100
+
+Simulate a 3-4 turn realistic conversation. Each message must reflect the agent's personality and current state.
+Valid states for this theme: ${statesStr}
+
+Then decide:
+- influenceImpact: 0.0-1.0 (how strongly did this conversation affect beliefs?)
+- derivedRelationshipType: one of INFLUENCES, DISAGREES_WITH, SUPPORTS, RELATES_TO
+- stateChange: if the conversation would logically cause one agent to change state, include it
+
+Return ONLY this JSON (no markdown):
+{
+  "messages": [
+    {"agentId": "${agentAId}", "agentName": "${agentAName}", "content": "...", "turn": 1},
+    {"agentId": "${agentBId}", "agentName": "${agentBName}", "content": "...", "turn": 2},
+    {"agentId": "${agentAId}", "agentName": "${agentAName}", "content": "...", "turn": 3},
+    {"agentId": "${agentBId}", "agentName": "${agentBName}", "content": "...", "turn": 4}
+  ],
+  "influenceImpact": <0.0-1.0>,
+  "derivedRelationshipType": "<INFLUENCES|DISAGREES_WITH|SUPPORTS|RELATES_TO>",
+  "stateChange": {
+    "agentId": "<agentAId or agentBId>",
+    "fromState": "<current state>",
+    "newState": "<valid state from the list>",
+    "reason": "<one sentence why>"
+  }
+}
+
+Only include stateChange if the conversation genuinely warrants it. Omit the field entirely if no state change occurs.`;
+
+  try {
+    const apiKey = process.env[`${providerType.toUpperCase()}_API_KEY`] || configManager.getDecryptedKey(providerType);
+    if (!apiKey) throw new Error(`No API key for ${providerType}`);
+
+    const provider = createProvider(providerType, { apiKey });
+    const response = await provider.generateCompletion(prompt, modelId);
+    const parsed = JSON.parse(stripMarkdownFences(response.content));
+
+    const validRelTypes: RelationshipType[] = ['INFLUENCES', 'DISAGREES_WITH', 'SUPPORTS', 'RELATES_TO'];
+    const relType: RelationshipType = validRelTypes.includes(parsed.derivedRelationshipType)
+      ? parsed.derivedRelationshipType
+      : 'RELATES_TO';
+
+    return {
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      influenceImpact: typeof parsed.influenceImpact === 'number'
+        ? Math.min(1, Math.max(0, parsed.influenceImpact))
+        : 0.3,
+      derivedRelationshipType: relType,
+      stateChange: parsed.stateChange && validStates.includes(parsed.stateChange.newState)
+        ? parsed.stateChange
+        : undefined,
+    };
+  } catch (error) {
+    const errorMsg = String(error);
+    const isQuotaError = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('rate limit');
+    console.error(`[${providerType}] simulateConversation failed:`, errorMsg);
+    if (isQuotaError) {
+      const err = new Error('API_QUOTA_EXCEEDED');
+      (err as any).isQuotaError = true;
+      throw err;
+    }
+    // Fallback: simple two-message exchange
+    return {
+      messages: [
+        { agentId: agentAId, agentName: agentAName, content: `I've been thinking about ${agentAState} lately.`, turn: 1 },
+        { agentId: agentBId, agentName: agentBName, content: `Interesting. From my perspective of ${agentBState}, I see it differently.`, turn: 2 },
+      ],
+      influenceImpact: 0.1,
+      derivedRelationshipType: agentAState === agentBState ? 'SUPPORTS' : 'RELATES_TO',
+    };
   }
 }
 

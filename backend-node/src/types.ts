@@ -135,6 +135,7 @@ export interface TickMessage {
   events: TickEvent[];
   node_states: Record<string, string>;
   total_agents: number;
+  advancedMetrics?: AdvancedMetrics;
 }
 
 // ── Analysis Report (Feature 1: AI Report Layer) ──────────────────────────
@@ -228,7 +229,7 @@ export interface ApiCallMessage {
   reason?: string;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage;
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage | ConversationUpdateMessage;
 
 // ── Direct Messages ───────────────────────────────────────────────────────
 
@@ -275,6 +276,75 @@ export interface GroupUpdateMessage {
   type: 'group_update';
   groups: AgentGroup[];
   newMessage?: GroupMessage;
+}
+
+// ── Conversation Types (Interaction Engine) ──────────────────────────────
+
+export interface ConversationMessage {
+  agentId: string;
+  agentName: string;
+  content: string;
+  turn: number;
+}
+
+export interface ConversationLog {
+  id: string;
+  simId: string;
+  tick: number;
+  agentAId: string;
+  agentBId: string;
+  agentAName: string;
+  agentBName: string;
+  messages: ConversationMessage[];
+  influenceImpact: number;          // 0-1, how much this conversation mattered
+  derivedRelationshipType: RelationshipType;
+  stateChange?: {
+    agentId: string;
+    fromState: string;
+    newState: string;
+    reason: string;
+  };
+  createdAt: string;                // ISO timestamp
+}
+
+export interface ConversationUpdateMessage {
+  type: 'conversation_update';
+  conversation: ConversationLog;
+}
+
+// ── Causal Chain (Explainability) ─────────────────────────────────────────
+
+export interface CausalStep {
+  tick: number;
+  type: 'post' | 'comment' | 'conversation' | 'belief_shift' | 'state_change';
+  description: string;
+  agentId?: string;
+  agentName?: string;
+  impact: 'high' | 'low';
+}
+
+export interface CausalChain {
+  agentId: string;
+  finalState: string;
+  steps: CausalStep[];
+  summary: string;
+}
+
+// ── Experiment Groups ─────────────────────────────────────────────────────
+
+export type ExperimentGroup = 'control' | 'treatment' | 'none';
+
+// ── Advanced Metrics ──────────────────────────────────────────────────────
+
+export interface AdvancedMetrics {
+  polarizationIndex: number;        // 0-1, bimodality of state distribution
+  echoChamberScore: number;         // 0-1, fraction of same-state edges
+  spreadSpeed: number | null;       // ticks to reach 50% threshold (null if not reached)
+  influenceCentrality: Record<string, number>;  // agentId → centrality score 0-1
+  groupMetrics?: {
+    controlStateCounts: Record<string, number>;
+    treatmentStateCounts: Record<string, number>;
+  };
 }
 
 // ── API Request/Response Types ────────────────────────────────────────────

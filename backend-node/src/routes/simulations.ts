@@ -125,6 +125,96 @@ router.post('/:simId/inject-belief', (req: Request<{ simId: string }, {}, { beli
   res.json({ status: 'ok', message: 'Belief injected to all agents' });
 });
 
+// ── Conversations ─────────────────────────────────────────────────────────
+
+router.get('/:simId/conversations', async (req: Request<{ simId: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const conversations = await engine.getConversationLogs();
+  res.json({ conversations });
+});
+
+router.get('/:simId/conversations/:agentA/:agentB', async (req: Request<{ simId: string; agentA: string; agentB: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const all = await engine.getConversationLogs();
+  const filtered = all.filter(c =>
+    (c.agentAId === req.params.agentA && c.agentBId === req.params.agentB) ||
+    (c.agentAId === req.params.agentB && c.agentBId === req.params.agentA)
+  );
+  res.json({ conversations: filtered });
+});
+
+// ── Causal Chain ──────────────────────────────────────────────────────────
+
+router.get('/:simId/agents/:agentId/causal-chain', (req: Request<{ simId: string; agentId: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const chain = engine.buildCausalChain(req.params.agentId);
+  if (!chain) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+  res.json(chain);
+});
+
+// ── Advanced Metrics ──────────────────────────────────────────────────────
+
+router.get('/:simId/advanced-metrics', (req: Request<{ simId: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const last = engine.metricsHistory[engine.metricsHistory.length - 1];
+  res.json(last?.advancedMetrics ?? { polarizationIndex: 0, echoChamberScore: 0, spreadSpeed: null, influenceCentrality: {} });
+});
+
+// ── Experiment Controls ───────────────────────────────────────────────────
+
+router.post('/:simId/experiment/assign', (req: Request<{ simId: string }, {}, { treatmentFraction?: number }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const fraction = req.body.treatmentFraction ?? 0.5;
+  engine.assignExperimentGroups(fraction);
+  res.json({ status: 'ok', message: `Assigned treatment (${Math.round(fraction * 100)}%) and control groups` });
+});
+
+router.get('/:simId/experiment/groups', (req: Request<{ simId: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  const agents = engine.getAgents();
+  const groups: Record<string, { agentId: string; experimentGroup: string; state: string; personality: string }[]> = {
+    control: [],
+    treatment: [],
+    none: [],
+  };
+  for (const [id, agent] of agents) {
+    groups[agent.experimentGroup].push({
+      agentId: id,
+      experimentGroup: agent.experimentGroup,
+      state: agent.state,
+      personality: agent.personality.name,
+    });
+  }
+  res.json({ groups });
+});
+
 router.delete('/:simId', (req: Request<{ simId: string }>, res: Response) => {
   const removed = removeSimulation(req.params.simId);
   if (!removed) {

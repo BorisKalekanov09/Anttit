@@ -44,7 +44,7 @@ const PANEL_STYLE = {
 export default function LivePage() {
   const { simId } = useParams<{ simId: string }>()
   const navigate = useNavigate()
-  const { state, control, snapshot, likePost, commentPost, fetchAgentProfile, fetchAgentTimeline, likeAgentProfile, fetchGroupMessages } = useSimulation(simId)
+  const { state, control, snapshot, likePost, commentPost, fetchAgentProfile, fetchAgentTimeline, likeAgentProfile, fetchGroupMessages, fetchCausalChain, assignExperimentGroups, injectTargeted } = useSimulation(simId)
   const [speed, setSpeed] = useState(0.4)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -67,6 +67,13 @@ export default function LivePage() {
    const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
    const [modalAgentId, setModalAgentId] = useState<string | null>(null)
    const [isModalOpen, setIsModalOpen] = useState(false)
+   const [experimentLabOpen, setExperimentLabOpen] = useState(false)
+   const [causalChain, setCausalChain] = useState<any>(null)
+   const [causalChainOpen, setCausalChainOpen] = useState(false)
+   const [treatmentFraction, setTreatmentFraction] = useState(0.5)
+   const [groupsAssigned, setGroupsAssigned] = useState(false)
+   const [targetedGroup, setTargetedGroup] = useState<'control' | 'treatment'>('treatment')
+   const [targetedFraction, setTargetedFraction] = useState(0.2)
 
   const initData = state.initData
   const latestTick = state.latestTick
@@ -78,6 +85,16 @@ export default function LivePage() {
     setSpeed(v)
     await control('set_speed', v)
   }, [control])
+
+  const handleShowCausalChain = useCallback(async (agentId: string) => {
+    const chain = await fetchCausalChain(agentId)
+    if (chain) {
+      setCausalChain(chain)
+      setCausalChainOpen(true)
+    } else {
+      toast.error('No causal data yet for this agent')
+    }
+  }, [fetchCausalChain])
 
   const handleSelectAgent = useCallback(async (agentId: string) => {
     setSelectedAgentId(agentId)
@@ -238,6 +255,7 @@ export default function LivePage() {
          history: state.history,
          states: states,
          stateColors: stateColors,
+         advancedMetrics: state.latestAdvancedMetrics ?? null,
        }
        
        sessionStorage.setItem(analysisKey, JSON.stringify(analysisData))
@@ -398,6 +416,14 @@ export default function LivePage() {
             style={{ fontSize: 12, padding: '6px 14px', borderColor: 'rgba(239,68,68,0.4)', color: '#ef4444' }}
           >
             ■ Stop & Analyze
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => setExperimentLabOpen(true)}
+            style={{ fontSize: 12, padding: '6px 14px', borderColor: 'rgba(99,102,241,0.4)', color: 'var(--accent)' }}
+            title="Experiment Lab: control vs treatment groups"
+          >
+            🧪 Lab
           </button>
           <button
             className="btn-secondary"
@@ -664,6 +690,7 @@ export default function LivePage() {
          feedPosts={state.discussionFeed ?? []}
          onLikePost={handleAgentLikePost}
          onCommentPost={handleAgentCommentPost}
+         onShowCausalChain={handleShowCausalChain}
        />
 
        <AgentDetailModal
@@ -682,6 +709,160 @@ export default function LivePage() {
          stateColors={stateColors}
          simId={simId}
        />
+
+       {/* Experiment Lab overlay */}
+       {experimentLabOpen && (
+         <div style={{
+           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200,
+           display: 'flex', alignItems: 'center', justifyContent: 'center',
+         }} onClick={() => setExperimentLabOpen(false)}>
+           <div style={{
+             background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16,
+             padding: 28, width: 480, maxWidth: '95vw',
+           }} onClick={e => e.stopPropagation()}>
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+               <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Experiment Lab</h2>
+               <button className="btn-icon" onClick={() => setExperimentLabOpen(false)}>✕</button>
+             </div>
+
+             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+               {/* Step 1: Assign groups */}
+               <div style={{ background: 'var(--bg-surface)', borderRadius: 10, padding: 16, border: '1px solid var(--border)' }}>
+                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                   Step 1 — Assign Control / Treatment Groups
+                 </div>
+                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                   Split agents into two groups. Only the treatment group will receive targeted injections.
+                 </div>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                   <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 130 }}>
+                     Treatment: {Math.round(treatmentFraction * 100)}%
+                   </span>
+                   <input type="range" min={0.1} max={0.9} step={0.1} value={treatmentFraction}
+                     onChange={e => setTreatmentFraction(Number(e.target.value))}
+                     style={{ flex: 1 }} />
+                   <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 70 }}>
+                     Control: {Math.round((1 - treatmentFraction) * 100)}%
+                   </span>
+                 </div>
+                 <button className="btn-secondary" style={{ fontSize: 12, padding: '8px 18px', width: '100%' }}
+                   onClick={async () => {
+                     const ok = await assignExperimentGroups(treatmentFraction)
+                     if (ok) { setGroupsAssigned(true); toast.success(`Groups assigned: ${Math.round(treatmentFraction * 100)}% treatment`) }
+                     else toast.error('Failed to assign groups')
+                   }}>
+                   {groupsAssigned ? '✓ Groups Assigned — Reassign' : 'Assign Groups'}
+                 </button>
+               </div>
+
+               {/* Step 2: Inject misinformation into treatment only */}
+               <div style={{ background: 'var(--bg-surface)', borderRadius: 10, padding: 16, border: `1px solid ${groupsAssigned ? 'var(--border)' : 'transparent'}`, opacity: groupsAssigned ? 1 : 0.4 }}>
+                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                   Step 2 — Targeted Injection
+                 </div>
+                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                   Inject the seed state into one group only, then observe divergence.
+                 </div>
+                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                   {(['treatment', 'control'] as const).map(g => (
+                     <button key={g} onClick={() => setTargetedGroup(g)}
+                       style={{ flex: 1, padding: '6px 10px', fontSize: 12, borderRadius: 6, fontWeight: 600,
+                         border: `1px solid ${targetedGroup === g ? 'var(--accent)' : 'var(--border)'}`,
+                         background: targetedGroup === g ? 'rgba(99,102,241,0.15)' : 'transparent',
+                         color: targetedGroup === g ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                       {g.charAt(0).toUpperCase() + g.slice(1)} Group
+                     </button>
+                   ))}
+                 </div>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                   <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                     Fraction: {Math.round(targetedFraction * 100)}%
+                   </span>
+                   <input type="range" min={0.05} max={1} step={0.05} value={targetedFraction}
+                     onChange={e => setTargetedFraction(Number(e.target.value))}
+                     style={{ flex: 1 }} disabled={!groupsAssigned} />
+                 </div>
+                 <button className="btn-secondary" disabled={!groupsAssigned}
+                   style={{ fontSize: 12, padding: '8px 18px', width: '100%',
+                     borderColor: groupsAssigned ? 'rgba(239,68,68,0.4)' : undefined,
+                     color: groupsAssigned ? '#ef4444' : undefined }}
+                   onClick={async () => {
+                     await injectTargeted(targetedGroup, targetedFraction)
+                     toast.success(`Injected seed into ${Math.round(targetedFraction * 100)}% of ${targetedGroup} group`)
+                   }}>
+                   Inject into {targetedGroup.charAt(0).toUpperCase() + targetedGroup.slice(1)} Group
+                 </button>
+               </div>
+
+               <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                 Tip: After injecting, watch the graph diverge. Stop & Analyze to see group comparison in the metrics report.
+               </div>
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* Causal Chain overlay */}
+       {causalChainOpen && causalChain && (
+         <div style={{
+           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200,
+           display: 'flex', alignItems: 'center', justifyContent: 'center',
+         }} onClick={() => setCausalChainOpen(false)}>
+           <div style={{
+             background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16,
+             padding: 28, width: 520, maxWidth: '95vw', maxHeight: '80vh', overflow: 'hidden',
+             display: 'flex', flexDirection: 'column',
+           }} onClick={e => e.stopPropagation()}>
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+               <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Why did this agent change?</h2>
+               <button className="btn-icon" onClick={() => setCausalChainOpen(false)}>✕</button>
+             </div>
+             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>{causalChain.summary}</p>
+             <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+               {causalChain.steps.length === 0 ? (
+                 <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No recorded state changes yet.</div>
+               ) : causalChain.steps.map((step: any, i: number) => (
+                 <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                   {/* Timeline line */}
+                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 32, flexShrink: 0 }}>
+                     <div style={{
+                       width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                       background: step.impact === 'high' ? 'var(--accent)' : 'var(--text-muted)',
+                       border: `2px solid ${step.impact === 'high' ? 'var(--accent)' : 'var(--border)'}`,
+                       marginTop: 3,
+                     }} />
+                     {i < causalChain.steps.length - 1 && (
+                       <div style={{ width: 1, flex: 1, background: 'var(--border)', minHeight: 16 }} />
+                     )}
+                   </div>
+                   <div style={{ flex: 1, paddingBottom: 8 }}>
+                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 2 }}>
+                       <span style={{
+                         fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                         background: step.type === 'state_change' ? 'rgba(99,102,241,0.15)' :
+                                     step.type === 'conversation' ? 'rgba(16,185,129,0.15)' :
+                                     step.type === 'comment' ? 'rgba(245,158,11,0.15)' : 'rgba(107,114,128,0.15)',
+                         color: step.type === 'state_change' ? 'var(--accent)' :
+                                step.type === 'conversation' ? '#10b981' :
+                                step.type === 'comment' ? '#f59e0b' : 'var(--text-muted)',
+                         textTransform: 'uppercase',
+                       }}>
+                         {step.type.replace(/_/g, ' ')}
+                       </span>
+                       {step.tick > 0 && (
+                         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Tick {step.tick}</span>
+                       )}
+                     </div>
+                     <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                       {step.description}
+                     </p>
+                   </div>
+                 </div>
+               ))}
+             </div>
+           </div>
+         </div>
+       )}
     </div>
   )
 }

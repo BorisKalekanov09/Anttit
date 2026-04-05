@@ -1,4 +1,4 @@
-import type { PersonalityDef, AgentRole, EpisodicEntry, Belief, AgentAction } from '../types.js';
+import type { PersonalityDef, AgentRole, EpisodicEntry, Belief, AgentAction, ExperimentGroup } from '../types.js';
 
 export interface AgentPersonality {
   name: string;
@@ -26,6 +26,7 @@ export interface Agent {
   followerThreshold: number;
   beliefs: Belief[];
   actionLog: AgentAction[];
+  experimentGroup: ExperimentGroup;
 }
 
 const MEMORY_MAX_LENGTH = 40;
@@ -60,6 +61,7 @@ export function createAgent(
     followerThreshold: role === 'follower' ? 0.6 : 0.8,
     beliefs: [],
     actionLog: [],
+    experimentGroup: 'none',
   };
 }
 

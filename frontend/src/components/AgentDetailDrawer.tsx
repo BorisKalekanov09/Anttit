@@ -21,6 +21,7 @@ export interface AgentDetailDrawerProps {
   feedPosts?: DiscussionPost[];
   onLikePost?: (postId: string) => Promise<void>;
   onCommentPost?: (postId: string, message: string) => Promise<void>;
+  onShowCausalChain?: (agentId: string) => Promise<void>;
 }
 
 const AgentDetailDrawer: React.FC<AgentDetailDrawerProps> = ({
@@ -37,6 +38,7 @@ const AgentDetailDrawer: React.FC<AgentDetailDrawerProps> = ({
   feedPosts = [],
   onLikePost,
   onCommentPost,
+  onShowCausalChain,
 }) => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
@@ -131,16 +133,32 @@ const AgentDetailDrawer: React.FC<AgentDetailDrawerProps> = ({
           ) : (
             <>
               {/* Profile Like Button */}
-               <button
-                 className="like-button"
-                 onClick={handleLike}
-                 disabled={hasLiked || isLiking}
-                 aria-label={hasLiked ? 'Already liked' : 'Like profile'}
-               >
-                 <span className="heart-emoji">❤️</span>
-                 <span className="like-count">{profile.profileLikes}</span>
-                 <span className="like-text">{hasLiked ? 'Liked' : 'Like'}</span>
-               </button>
+               <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                 <button
+                   className="like-button"
+                   onClick={handleLike}
+                   disabled={hasLiked || isLiking}
+                   aria-label={hasLiked ? 'Already liked' : 'Like profile'}
+                   style={{ flex: 1 }}
+                 >
+                   <span className="heart-emoji">❤️</span>
+                   <span className="like-count">{profile.profileLikes}</span>
+                   <span className="like-text">{hasLiked ? 'Liked' : 'Like'}</span>
+                 </button>
+                 {onShowCausalChain && agentId && (
+                   <button
+                     onClick={() => onShowCausalChain(agentId)}
+                     style={{
+                       flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                       background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                       color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap',
+                     }}
+                     title="Show causal chain — why did this agent change?"
+                   >
+                     🔍 Why changed?
+                   </button>
+                 )}
+               </div>
 
               {/* Beliefs Section */}
               <section className="beliefs-section">
