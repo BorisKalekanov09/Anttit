@@ -1,5 +1,12 @@
 import { encrypt, decrypt, hashSensitiveData } from './encryption.js';
 import type { ProviderType } from './model-registry.js';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, '../../data');
+const CONFIG_FILE = join(DATA_DIR, 'provider-configs.json');
 
 export interface StoredProviderConfig {
   provider: ProviderType;
@@ -35,6 +42,25 @@ class ConfigManager {
   private configs: Map<ProviderType, StoredProviderConfig> = new Map();
   private modelConfig: ActiveModelConfig | null = null;
 
+  private persist(): void {
+    try {
+      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+      writeFileSync(CONFIG_FILE, JSON.stringify(this.exportForStorage(), null, 2), 'utf-8');
+    } catch (error) {
+      console.error('[ConfigManager] Failed to persist config:', error);
+    }
+  }
+
+  loadFromDisk(): void {
+    try {
+      if (!existsSync(CONFIG_FILE)) return;
+      const raw = readFileSync(CONFIG_FILE, 'utf-8');
+      this.loadConfig(JSON.parse(raw));
+    } catch (error) {
+      console.error('[ConfigManager] Failed to load config from disk:', error);
+    }
+  }
+
   loadConfig(data: Record<string, unknown>): void {
     if (data.providers && typeof data.providers === 'object') {
       const providers = data.providers as Record<string, StoredProviderConfig>;
@@ -63,6 +89,7 @@ class ConfigManager {
     };
 
     this.configs.set(provider, stored);
+    this.persist();
     return stored;
   }
 
@@ -91,6 +118,7 @@ class ConfigManager {
       worldGeneration: { provider: worldGenProvider, modelId: worldGenModel },
       agentDecision: { provider: agentProvider, modelId: agentModel },
     };
+    this.persist();
   }
 
   getActiveModels(): ActiveModelConfig {
@@ -111,11 +139,13 @@ class ConfigManager {
         config.validationError = error;
         config.isActive = false;
       }
+      this.persist();
     }
   }
 
   deleteConfig(provider: ProviderType): void {
     this.configs.delete(provider);
+    this.persist();
   }
 
   exportForStorage(): {

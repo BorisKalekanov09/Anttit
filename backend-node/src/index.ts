@@ -14,10 +14,16 @@ import feedRouter from './routes/feed.js';
 import agentsRouter from './routes/agents.js';
 import worldBuilderRouter from './routes/worldBuilder.js';
 import configRouter from './routes/config.js';
+import dmRouter from './routes/dm.js';
+import groupsRouter from './routes/groups.js';
 import { viewerIdMiddleware } from './middleware/viewerId.js';
 import { getSimulation } from './simulation/registry.js';
+import { configManager } from './lib/config-manager.js';
 
 config();
+
+// Load persisted provider configs from disk
+configManager.loadFromDisk();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -50,6 +56,8 @@ app.use('/api/simulations/:simId/feed', viewerIdMiddleware, feedRouter);
 app.use('/api/simulations/:simId/agents', viewerIdMiddleware, agentsRouter);
 app.use('/api/world-builder', worldBuilderRouter);
 app.use('/api/config', configRouter);
+app.use('/api/simulations/:simId/dms', dmRouter);
+app.use('/api/simulations/:simId/groups', groupsRouter);
 
 const server = createServer(app);
 

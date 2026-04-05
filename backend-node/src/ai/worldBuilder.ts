@@ -1,16 +1,44 @@
 import type { BaseProvider } from '../lib/providers/base.js';
 import type { PersonalityDef } from '../types.js';
 
-function stripMarkdownFences(text: string): string {
-  let cleaned = text.trim();
-  if (cleaned.startsWith('```')) {
-    const parts = cleaned.split('```');
-    cleaned = parts[1] || cleaned;
-    if (cleaned.startsWith('json')) {
-      cleaned = cleaned.slice(4);
+function extractJson(text: string): string {
+  const trimmed = text.trim();
+
+  // 1. Try markdown code fences first (handles leading text before the fence too)
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    const candidate = fenceMatch[1].trim();
+    try { JSON.parse(candidate); return candidate; } catch {}
+  }
+
+  // 2. Try the whole text as-is
+  try { JSON.parse(trimmed); return trimmed; } catch {}
+
+  // 3. Walk from each '{' and try to find a valid JSON object
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] === '{') {
+      for (let j = trimmed.length; j > i; j--) {
+        if (trimmed[j] === '}') {
+          const candidate = trimmed.slice(i, j + 1);
+          try { JSON.parse(candidate); return candidate; } catch {}
+        }
+      }
     }
   }
-  return cleaned.trim();
+
+  // 4. Walk from each '[' and try to find a valid JSON array
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] === '[') {
+      for (let j = trimmed.length; j > i; j--) {
+        if (trimmed[j] === ']') {
+          const candidate = trimmed.slice(i, j + 1);
+          try { JSON.parse(candidate); return candidate; } catch {}
+        }
+      }
+    }
+  }
+
+  return trimmed;
 }
 
 export interface WorldConfigRaw {
@@ -52,7 +80,7 @@ Return ONLY valid JSON, no markdown.`;
       temperature: 0.7,
       maxTokens: 1200,
     });
-    const text = stripMarkdownFences(result.content);
+    const text = extractJson(result.content);
     return JSON.parse(text);
   } catch (error: unknown) {
     throw error;
@@ -89,7 +117,7 @@ Return ONLY valid JSON array, no markdown.`;
       temperature: 0.8,
       maxTokens: 1500,
     });
-    const text = stripMarkdownFences(result.content);
+    const text = extractJson(result.content);
     const personalities: PersonalityDef[] = JSON.parse(text);
 
     const total = personalities.reduce((sum, p) => sum + p.suggested_percentage, 0);

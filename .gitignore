@@ -8,3 +8,7 @@ temp/
 nul
 *.log
 .DS_Store
+backend-node/test_debug.mjs
+backend-node/data/*
+backend-node/.sisyphus-windows-file-locking-fix.md
+backend-node/.env

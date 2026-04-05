@@ -37,7 +37,8 @@ router.post('/', async (req: Request<{ simId: string }, {}, WhatIfRequest>, res:
       description,
       engine.theme.THEME_NAME,
       currentStateCounts,
-      AVAILABLE_EVENT_TYPES
+      AVAILABLE_EVENT_TYPES,
+      engine.config.modelName
     );
 
     const response: WhatIfResponse = {
@@ -51,7 +52,7 @@ router.post('/', async (req: Request<{ simId: string }, {}, WhatIfRequest>, res:
     console.error('[What-If Error]', error);
     
     const errorMsg = String(error);
-    const isQuotaError = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED');
+    const isQuotaError = errorMsg.includes('API_QUOTA_EXCEEDED');
     
     res.json({
       eventType: 'rumour_burst',

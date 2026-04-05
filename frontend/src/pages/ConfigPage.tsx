@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import type { SimConfig, WorldConfig } from '../types/simulation'
 import { AppShell } from '../components/AppShell'
 import WorldBuilder from '../components/WorldBuilder'
 import GeneratedConfigApproval from '../components/GeneratedConfigApproval'
+import { useProviderConfig } from '../hooks/useProviderConfig'
 
 const DEFAULT_CONFIG: SimConfig = {
   theme: '',
@@ -18,6 +19,11 @@ export default function ConfigPage() {
   const navigate = useNavigate()
   const [step, setStep] = useState<'builder' | 'approval'>('builder')
   const [config, setConfig] = useState<SimConfig>(DEFAULT_CONFIG)
+  const { activeModels, fetchActiveModels } = useProviderConfig()
+
+  useEffect(() => {
+    fetchActiveModels()
+  }, [fetchActiveModels])
 
   const handleWorldBuilderConfig = (worldConfig: WorldConfig) => {
     const built: SimConfig = {
@@ -26,6 +32,10 @@ export default function ConfigPage() {
       topology: worldConfig.suggested_config.topology as SimConfig['topology'],
       tick_rate: worldConfig.suggested_config.tick_rate,
       personalities: worldConfig.personality_archetypes,
+      // Include the active model for agent decision-making
+      modelName: activeModels
+        ? `${activeModels.agentDecision.provider}:${activeModels.agentDecision.modelId}`
+        : undefined,
     }
     setConfig(built)
     setStep('approval')

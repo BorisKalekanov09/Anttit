@@ -78,7 +78,7 @@ export default function WorldBuilder({ onGenerateConfig, onSkip }: WorldBuilderP
           Describe your world
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: 15, lineHeight: 1.6 }}>
-          Write a topic or scenario in plain language — Gemini will generate the entire simulation config for you.
+          Write a topic or scenario in plain language — your configured AI will generate the entire simulation config for you.
         </p>
       </div>
 

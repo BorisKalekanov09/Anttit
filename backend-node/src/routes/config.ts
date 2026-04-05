@@ -26,6 +26,16 @@ function checkRateLimit(ip: string): boolean {
 }
 
 router.use((req: Request, res: Response, next) => {
+  // Only rate limit POST/DELETE requests, allow all GET requests
+  if (req.method === 'GET') {
+    return next();
+  }
+
+  // Also allow validation endpoint without rate limiting
+  if (req.path.includes('/validate/')) {
+    return next();
+  }
+
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
   if (!checkRateLimit(ip)) {
@@ -49,14 +59,26 @@ router.get('/providers', (_req: Request, res: Response) => {
   const providers = getAllProviders();
   const configs = configManager.getAllConfigs();
 
-  const providerStatus = providers.map(provider => {
+  // Map provider types to display names
+  const providerDisplayNames: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+    groq: 'Groq',
+    openrouter: 'OpenRouter',
+    ollama: 'Ollama',
+  };
+
+  const providerStatus: Record<string, any> = {};
+  
+  providers.forEach(provider => {
     const config = configs.find(c => c.provider === provider);
-    return {
-      provider,
-      configured: !!config,
-      isActive: config?.isActive || false,
-      lastValidated: config?.lastValidated,
-      validationError: config?.validationError,
+    const displayName = providerDisplayNames[provider] || provider;
+    
+    providerStatus[displayName] = {
+      status: config?.isActive ? 'connected' : (config ? 'error' : 'not_configured'),
+      error: config?.validationError,
+      last_validated: config?.lastValidated,
     };
   });
 
@@ -78,12 +100,15 @@ router.get('/models/:provider', (req: Request, res: Response) => {
 
 router.post('/save', express.json({ limit: '1kb' }), async (req: Request, res: Response) => {
   try {
-    const { provider, apiKey, baseUrl, modelName } = req.body as ProviderConfigRequest;
+    let { provider, apiKey, baseUrl, modelName } = req.body as ProviderConfigRequest;
 
     if (!provider) {
       res.status(400).json({ error: 'Provider is required' });
       return;
     }
+
+    // Normalize provider name to lowercase
+    provider = (provider as string).toLowerCase() as ProviderType;
 
     const config = configManager.saveConfig(provider, {
       provider,
@@ -104,23 +129,24 @@ router.post('/save', express.json({ limit: '1kb' }), async (req: Request, res: R
   }
 });
 
-router.post('/validate/:provider', async (req: Request, res: Response) => {
+router.post('/validate/:provider', express.json({ limit: '1kb' }), async (req: Request, res: Response) => {
   try {
-    const { provider } = req.params;
-    const config = configManager.getConfig(provider as ProviderType);
+    let { provider } = req.params;
+    const { apiKey, baseUrl, modelName } = req.body as ProviderConfigRequest;
 
-    if (!config) {
-      res.status(404).json({ error: `No configuration found for ${provider}` });
+    if (!provider) {
+      res.status(400).json({ error: 'Provider is required' });
       return;
     }
 
-    const apiKey = configManager.getDecryptedKey(provider as ProviderType);
+    // Normalize provider name to lowercase
+    provider = provider.toLowerCase();
 
     try {
       const providerInstance = createProvider(provider as ProviderType, {
         apiKey: apiKey || undefined,
-        baseUrl: config.baseUrl,
-        modelName: config.modelName,
+        baseUrl,
+        modelName,
       });
 
       const validation = await providerInstance.validateConnection();
@@ -139,7 +165,7 @@ router.post('/validate/:provider', async (req: Request, res: Response) => {
       res.json({
         success: true,
         provider,
-        message: 'Provider validated and activated',
+        message: 'Provider validated successfully',
       });
     } catch (validationError) {
       const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
@@ -202,7 +228,7 @@ router.get('/active-models', (_req: Request, res: Response) => {
 });
 
 router.delete('/:provider', (req: Request, res: Response) => {
-  const { provider } = req.params;
+  const provider = req.params.provider.toLowerCase();
   configManager.deleteConfig(provider as ProviderType);
   res.json({
     success: true,

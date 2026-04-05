@@ -117,10 +117,13 @@ async function loadFeedFromDisk(simId: string): Promise<FeedStorage> {
 
 /**
  * Write feed to disk safely (write to temp, then rename).
+ * Retries on EPERM/EACCES errors (Windows file locking).
  */
 async function writeFeedToDisk(simId: string, feed: FeedStorage): Promise<void> {
   const filePath = getFeedFilePath(simId);
   const tempPath = `${filePath}.tmp`;
+  const maxRetries = 5;
+  let lastError: any;
 
   try {
     // Ensure directory exists
@@ -129,14 +132,36 @@ async function writeFeedToDisk(simId: string, feed: FeedStorage): Promise<void> 
     // Write to temp file
     await fs.writeFile(tempPath, JSON.stringify(feed, null, 2), 'utf-8');
 
-    // Atomic rename
-    await fs.rename(tempPath, filePath);
+    // Atomic rename with retry logic for Windows file locking
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await fs.rename(tempPath, filePath);
+        return; // Success
+      } catch (error: any) {
+        lastError = error;
+        // Only retry on permission/locking errors
+        if ((error.code === 'EPERM' || error.code === 'EACCES') && attempt < maxRetries - 1) {
+          // Exponential backoff: 10ms, 20ms, 40ms, 80ms
+          const delayMs = Math.min(100, 10 * Math.pow(2, attempt));
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+        // Non-retryable error or final attempt
+        throw error;
+      }
+    }
   } catch (error) {
     // Clean up temp file on error
     try {
       await fs.unlink(tempPath);
     } catch {
       // Temp file may not exist; ignore
+    }
+    // Log the actual error for debugging
+    if ((error as NodeJS.ErrnoException)?.code === 'EPERM' || (error as NodeJS.ErrnoException)?.code === 'EACCES') {
+      console.warn(`[FeedStore] File lock on ${simId} (${(error as NodeJS.ErrnoException).code}), write operation skipped`);
+      // Don't throw - allow operation to proceed (feed exists, just not updated)
+      return;
     }
     throw error;
   }

@@ -29,9 +29,9 @@ export function ProviderForm({ provider, onSubmit, onCancel, loading = false, er
 
     const config: ProviderConfig = {
       provider,
-      api_key: apiKey,
-      base_url: isOllama ? baseUrl : undefined,
-      model_name: isOllama ? modelName : undefined,
+      apiKey: apiKey,
+      baseUrl: isOllama ? baseUrl : undefined,
+      modelName: isOllama ? modelName : undefined,
     }
     onSubmit(config)
   }

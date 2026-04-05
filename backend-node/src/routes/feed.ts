@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import type { DiscussionComment, DiscussionPost } from '../types.js';
 import { getSimulation } from '../simulation/registry.js';
-import { readFeed } from '../store/feedStore.js';
+import { readFeed, appendPost } from '../store/feedStore.js';
 
 const router = Router({ mergeParams: true });
 
@@ -22,6 +22,46 @@ router.get('/', async (req: Request<{ simId: string }>, res: Response) => {
     res.json(snapshot);
   } catch (error) {
     console.error('[Feed Error]', error);
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// ── POST /api/simulations/:simId/feed/posts ───────────────────────────────
+// Create a new discussion post (agent-generated or user-initiated)
+router.post('/posts', async (req: Request<{ simId: string }, {}, { title?: string; content?: string; author?: string; agentId?: string; tags?: string[] }>, res: Response) => {
+  try {
+    const { simId } = req.params;
+    const { title = 'Untitled', content = '', author = 'Anonymous', agentId, tags = [] } = req.body;
+
+    const engine = getSimulation(simId);
+    if (!engine) {
+      res.status(404).json({ error: 'Simulation not found' });
+      return;
+    }
+
+    const newPost: DiscussionPost = {
+      id: uuidv4(),
+      title,
+      content,
+      author,
+      author_type: agentId ? 'agent' : 'user',
+      created_at: new Date().toISOString(),
+      likes: 0,
+      comments: [],
+      tags,
+      ...(agentId && { agentId }),
+    };
+
+    const createdPost = await appendPost(simId, newPost);
+    
+    // Record action if agent-authored
+    if (agentId) {
+      engine.recordAction(agentId, 'post', createdPost.id);
+    }
+
+    res.status(201).json(createdPost);
+  } catch (error) {
+    console.error('[Feed Create Error]', error);
     res.status(500).json({ error: String(error) });
   }
 });

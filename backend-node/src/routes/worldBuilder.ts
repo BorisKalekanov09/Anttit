@@ -89,7 +89,9 @@ router.post('/generate', async (req, res) => {
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
     console.error('[WorldBuilder] Error generating world config:', msg);
+    if (stack) console.error('[WorldBuilder] Stack:', stack);
 
     const normalized = msg.toLowerCase();
     let statusCode = 500;
@@ -119,9 +121,18 @@ router.post('/generate', async (req, res) => {
     ) {
       statusCode = 401;
       errorMessage = 'Invalid API key. Please update your provider configuration.';
-    } else if (normalized.includes('model') && (normalized.includes('not available') || normalized.includes('not found'))) {
+    } else if (normalized.includes('model') && (normalized.includes('not available') || normalized.includes('not found') || normalized.includes('decommissioned'))) {
       statusCode = 400;
-      errorMessage = 'Model not found for the selected provider. Please choose a valid model.';
+      errorMessage = 'The selected model is no longer available. Please go to Settings → Model Selection and choose an active model.';
+    } else if (normalized.includes('syntaxerror') || normalized.includes('json') || normalized.includes('unexpected token')) {
+      statusCode = 500;
+      errorMessage = 'The AI returned an invalid response. Please try again.';
+    } else if (normalized.includes('aborted') || normalized.includes('timeout') || normalized.includes('econnrefused')) {
+      statusCode = 503;
+      errorMessage = 'Connection to AI provider timed out. Please try again.';
+    } else {
+      // Log unknown errors with full details for debugging
+      console.error('[WorldBuilder] Unclassified error — full message:', JSON.stringify(msg));
     }
 
     res.status(statusCode).json({ error: errorMessage });

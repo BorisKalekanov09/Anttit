@@ -37,7 +37,7 @@ interface AgentGraphVisualizationProps {
 }
 
 const RELATIONSHIP_COLORS: Record<string, string> = {
-  INFLUENCES: '#4a90e2',
+  INFLUENCES: '#00a8b5',
   SUPPORTS: '#22c55e',
   DISAGREES_WITH: '#ef4444',
   RELATES_TO: '#888',
@@ -62,7 +62,7 @@ export default function AgentGraphVisualization({
 
   // Rebuild nodes from latest tick, keep links from relationships
   useEffect(() => {
-    if (!initData || !latestTick) return
+    if (!initData || !latestTick || !latestTick.node_states || !initData.state_colors) return
 
     const nodes: GraphNode[] = Object.entries(latestTick.node_states).map(([id, state]) => ({
       id,
@@ -94,7 +94,7 @@ export default function AgentGraphVisualization({
 
   // If no relationships yet, show topology edges from initData
   useEffect(() => {
-    if (relationships.length > 0 || !initData) return
+    if (relationships.length > 0 || !initData || !initData.edges) return
 
     const links: GraphLink[] = initData.edges.slice(0, 600).map(([from, to]) => ({
       source: String(from),
@@ -109,13 +109,29 @@ export default function AgentGraphVisualization({
   }, [initData, relationships.length])
 
   const handleNodeClick = useCallback((node: GraphNode) => {
+    console.log("DEBUG: Graph node clicked -", node.id)
     setSelectedId(node.id)
     onSelectAgent?.(node.id)
   }, [onSelectAgent])
 
   const handleLinkClick = useCallback((link: GraphLink) => {
     const rel = relationships.find(r => r.id === link.id)
-    if (rel) onSelectRelationship?.(rel)
+    if (rel) {
+      onSelectRelationship?.(rel)
+    } else if (onSelectRelationship) {
+      // Topology (structural) edge — synthesise a minimal relationship object
+      const sourceId = typeof link.source === 'string' ? link.source : (link.source as GraphNode).id
+      const targetId = typeof link.target === 'string' ? link.target : (link.target as GraphNode).id
+      onSelectRelationship({
+        id: link.id,
+        simId: '',
+        sourceAgentId: sourceId,
+        targetAgentId: targetId,
+        type: 'RELATES_TO',
+        strength: link.strength ?? 0.3,
+        narrative: 'Direct network connection — no social influence recorded yet.',
+      })
+    }
   }, [relationships, onSelectRelationship])
 
   const drawArrow = useCallback((

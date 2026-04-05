@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import type { AIModel } from '../hooks/useProviderConfig'
 
 interface ModelSelectorProps {
@@ -12,11 +12,12 @@ interface ModelSelectorProps {
 
 export function ModelSelector({ models, selectedModel, onSelect, label, disabled = false, loading = false }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
-  const selectedModelObj = models.find(m => m.name === selectedModel)
+  const selectedModelObj = models.find(m => m.id === selectedModel)
 
   return (
-    <div>
+    <div ref={containerRef} style={{ position: 'relative' }}>
       <label className="label" style={{ marginBottom: 8 }}>
         {label}
       </label>
@@ -27,7 +28,6 @@ export function ModelSelector({ models, selectedModel, onSelect, label, disabled
           background: 'var(--bg-surface)',
           border: '1px solid var(--border)',
           borderRadius: 10,
-          overflow: 'hidden',
         }}
       >
         <button
@@ -40,6 +40,7 @@ export function ModelSelector({ models, selectedModel, onSelect, label, disabled
             background: 'transparent',
             color: 'var(--text-primary)',
             border: 'none',
+            borderRadius: 10,
             cursor: disabled ? 'not-allowed' : 'pointer',
             textAlign: 'left',
             display: 'flex',
@@ -70,7 +71,7 @@ export function ModelSelector({ models, selectedModel, onSelect, label, disabled
               borderRadius: '0 0 10px 10px',
               maxHeight: 240,
               overflowY: 'auto',
-              zIndex: 10,
+              zIndex: 100,
             }}
           >
             {models.length === 0 ? (
@@ -80,16 +81,16 @@ export function ModelSelector({ models, selectedModel, onSelect, label, disabled
             ) : (
               models.map(model => (
                 <button
-                  key={model.name}
+                  key={model.id}
                   type="button"
                   onClick={() => {
-                    onSelect(model.name)
+                    onSelect(model.id)
                     setIsOpen(false)
                   }}
                   style={{
                     width: '100%',
                     padding: '10px 14px',
-                    background: selectedModel === model.name ? 'rgba(124,109,250,0.15)' : 'transparent',
+                    background: selectedModel === model.id ? 'rgba(124,109,250,0.15)' : 'transparent',
                     border: 'none',
                     color: 'var(--text-primary)',
                     cursor: 'pointer',
@@ -99,7 +100,7 @@ export function ModelSelector({ models, selectedModel, onSelect, label, disabled
                   }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
                   onMouseLeave={e => {
-                    e.currentTarget.style.background = selectedModel === model.name ? 'rgba(124,109,250,0.15)' : 'transparent'
+                    e.currentTarget.style.background = selectedModel === model.id ? 'rgba(124,109,250,0.15)' : 'transparent'
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>

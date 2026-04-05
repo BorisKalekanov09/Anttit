@@ -36,11 +36,12 @@ export function ruleDecision(agent: Agent, neighborStates: string[]): Decision {
   const stubbornness = traits.stubbornness;
 
   const believerCount = neighborStates.filter(s => s === 'believer').length;
+  const exposedCount = neighborStates.filter(s => s === 'exposed').length;
   const total = neighborStates.length || 1;
-  const pressure = believerCount / total;
+  const pressure = (believerCount + exposedCount) / total;
 
   if (state === 'unaware') {
-    const threshold = 1.0 - (credulity / 100.0) * 0.6 - 0.1;
+    const threshold = 0.4 - (credulity / 100.0) * 0.25;
     if (pressure > threshold) {
       return ['exposed', `exposure pressure ${Math.round(pressure * 100)}% exceeded threshold`];
     }
@@ -48,18 +49,18 @@ export function ruleDecision(agent: Agent, neighborStates: string[]): Decision {
   }
 
   if (state === 'exposed') {
-    const acceptThreshold = 1.0 - credulity / 100.0;
+    const acceptThreshold = 0.5 - credulity / 200.0;
     if (pressure > acceptThreshold) {
       return ['believer', 'enough believers around — convinced'];
     }
-    if (Math.random() < stubbornness / 200.0) {
+    if (Math.random() < stubbornness / 150.0) {
       return ['resistant', 'personal skepticism triggered'];
     }
     return ['exposed', 'still evaluating'];
   }
 
   if (state === 'believer') {
-    if (Math.random() < stubbornness / 500.0) {
+    if (Math.random() < stubbornness / 300.0) {
       return ['resistant', 'eventually questioned belief'];
     }
     return ['believer', 'reinforced by social network'];

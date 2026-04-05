@@ -18,13 +18,20 @@ import type {
   BeliefUpdateMessage,
   RelationshipUpdateMessage,
   RelationshipType,
+  DirectMessage,
+  DirectMessageUpdateMessage,
+  AgentGroup,
+  GroupMessage,
+  GroupUpdateMessage,
 } from '../types.js';
 import { Agent, createAgent, addMemory, addEpisodicMemory, getTraits, applyRoleModifiers, canCompressMemory, canBecomeResistant } from './agent.js';
 import { buildGraph, computePositions, getEdgeList, TopologyType } from './topology.js';
 import { loadTheme, ThemeModule } from './themes/index.js';
 import * as gemini from '../ai/gemini.js';
-import { addLike, addComment, readFeed } from '../store/feedStore.js';
+import { addLike, addComment, readFeed, appendPost } from '../store/feedStore.js';
 import { graphDb } from '../db/graphDb.js';
+import { appendDM } from '../store/dmStore.js';
+import { getGroups, createGroup, addMember, removeMember as removeGroupMember, appendGroupMessage, findExistingGroup } from '../store/groupStore.js';
 
 export class SimulationEngine {
   config: SimulationConfig;
@@ -42,6 +49,8 @@ export class SimulationEngine {
   injectQueue: Array<{ type: string; [key: string]: unknown }>;
   analysis: AnalysisReport | null;
   intervalHandle: ReturnType<typeof setInterval> | null;
+  apiCallCount: number;
+  totalTokensUsed: number;
 
   constructor(config: SimulationConfig) {
     this.config = config;
@@ -59,6 +68,8 @@ export class SimulationEngine {
     this.injectQueue = [];
     this.analysis = null;
     this.intervalHandle = null;
+    this.apiCallCount = 0;
+    this.totalTokensUsed = 0;
   }
 
   async build(): Promise<InitMessage> {
@@ -183,6 +194,27 @@ export class SimulationEngine {
     }
   }
 
+  emitDMUpdate(dm: DirectMessage): void {
+    const msg: DirectMessageUpdateMessage = { type: 'dm_update', dm };
+    this.emit(msg);
+  }
+
+  emitGroupUpdate(groups: AgentGroup[], newMessage?: GroupMessage): void {
+    const msg: GroupUpdateMessage = { type: 'group_update', groups, newMessage };
+    this.emit(msg);
+  }
+
+  private trackApiCall(tokensUsed: number = 0, reason: string = ''): void {
+    this.apiCallCount++;
+    this.totalTokensUsed += tokensUsed;
+    this.emit({
+      type: 'api_call',
+      count: this.apiCallCount,
+      tokensUsed: this.totalTokensUsed,
+      reason,
+    });
+  }
+
   pause(): void {
     this.paused = true;
   }
@@ -277,6 +309,33 @@ export class SimulationEngine {
     while (this.injectQueue.length > 0) {
       const ev = this.injectQueue.shift()!;
       this.applyInjection(ev);
+    }
+
+    // Passive exposure: agents in the initial state have a small random chance
+    // to be passively exposed each tick. This prevents stalling when the seed
+    // fraction is too small to overcome the exposure threshold via social pressure alone.
+    const PASSIVE_EXPOSURE_CHANCE = 0.08;
+    const initialState = this.theme.INITIAL_STATE;
+    const passiveTargetState = this.theme.VALID_STATES[1];
+    if (passiveTargetState && passiveTargetState !== initialState) {
+      for (const [aid, agent] of this.agents) {
+        if (agent.state === initialState && Math.random() < PASSIVE_EXPOSURE_CHANCE) {
+          const oldState = agent.state;
+          agent.state = passiveTargetState;
+          this.updateBeliefsForTransition(agent, oldState, passiveTargetState);
+          this.emit({ type: 'belief_update', agentId: aid, beliefs: agent.beliefs } as BeliefUpdateMessage);
+          addMemory(agent, `Tick ${this.tick}: passively encountered ${this.theme.THEME_NAME}`);
+          tickEvents.push({
+            tick: this.tick,
+            agent_id: aid,
+            personality: agent.personality.name,
+            from_state: oldState,
+            to_state: passiveTargetState,
+            reason: 'passive exposure',
+            ai: false,
+          });
+        }
+      }
     }
 
     const agentIds = Array.from(this.agents.keys());
@@ -387,6 +446,16 @@ export class SimulationEngine {
       }
     }
 
+    // Every 3 ticks: agents with relationships occasionally DM each other
+    if (this.tick % 3 === 0) {
+      void this.performAutoDMs();
+    }
+
+    // Every 5 ticks: agents with shared beliefs may form or join groups
+    if (this.tick % 5 === 0) {
+      void this.performAutoGroupFormation();
+    }
+
     if (this.tick % 15 === 0) {
       const compressionTasks = Array.from(this.agents.values())
         .filter(a => a.usedGeminiRecently && a.memory.length > 0 && canCompressMemory(a))
@@ -399,7 +468,7 @@ export class SimulationEngine {
             const memoryWithEpisodic = episodicSummary 
               ? [...agent.memory, `Key events: ${episodicSummary}`]
               : agent.memory;
-            agent.memorySummary = await gemini.compressMemory(memoryWithEpisodic, agent.personality.name);
+            agent.memorySummary = await gemini.compressMemory(memoryWithEpisodic, agent.personality.name, this.config.modelName);
           } catch {
           }
         });
@@ -464,7 +533,7 @@ export class SimulationEngine {
     return baseDecision;
   }
 
-  private getNeighbors(agentId: string): string[] {
+  public getNeighbors(agentId: string): string[] {
     const agent = this.agents.get(agentId)!;
     const directNeighbors = this.graph.neighbors(agentId);
     
@@ -731,12 +800,11 @@ export class SimulationEngine {
     try {
       await addLike(this.config.simId, postId);
       
-      // Record action if agentId provided
       if (agentId) {
         this.recordAction(agentId, 'like', postId);
+        this.trackApiCall(0, 'agent_like');
       }
       
-      // Emit feed_update with current feed snapshot
       const feedSnapshot = await readFeed(this.config.simId);
       const feedMsg: FeedUpdateMessage = {
         type: 'feed_update',
@@ -754,12 +822,11 @@ export class SimulationEngine {
     try {
       await addComment(this.config.simId, postId, comment);
       
-      // Record action if agentId provided
       if (agentId) {
         this.recordAction(agentId, 'comment', postId);
+        this.trackApiCall(0, 'agent_comment');
       }
       
-      // Emit feed_update with current feed snapshot
       const feedSnapshot = await readFeed(this.config.simId);
       const feedMsg: FeedUpdateMessage = {
         type: 'feed_update',
@@ -783,6 +850,43 @@ export class SimulationEngine {
     }
   }
 
+  async createFeedPost(agentId: string, title: string, content: string, tags: string[] = []): Promise<DiscussionPost> {
+    try {
+      const agent = this.agents.get(agentId);
+      const author = agent?.personality.name || 'Unknown';
+      
+      const newPost: DiscussionPost = {
+        id: uuidv4(),
+        title,
+        content,
+        author,
+        author_type: 'agent',
+        created_at: new Date().toISOString(),
+        likes: 0,
+        comments: [],
+        tags,
+        agentId,
+      };
+      
+      const createdPost = await appendPost(this.config.simId, newPost);
+      this.recordAction(agentId, 'post', createdPost.id);
+      this.trackApiCall(0, 'agent_post');
+      
+      const feedSnapshot = await readFeed(this.config.simId);
+      const feedMsg: FeedUpdateMessage = {
+        type: 'feed_update',
+        reason: 'new_post',
+        posts: feedSnapshot.posts,
+      };
+      this.emit(feedMsg);
+      
+      return createdPost;
+    } catch (error) {
+      console.error('[Engine] Error creating feed post:', error);
+      throw error;
+    }
+  }
+
   getAgents(): Map<string, Agent> {
     return this.agents;
   }
@@ -801,30 +905,347 @@ export class SimulationEngine {
     });
   }
 
+  /**
+   * Agents with any relationship occasionally send DMs.
+   * Falls back to neighbor-pair sampling when no tracked relationships exist.
+   * We sample a few pairs per check to avoid flooding.
+   */
+  private async performAutoDMs(): Promise<void> {
+    try {
+      const relationships = graphDb.getRelationshipsForSim(this.config.simId);
+      // Lower threshold to 0.3 so early-sim relationships qualify too
+      let strong = relationships.filter(r => r.strength >= 0.3 && r.type !== 'RELATES_TO');
+
+      // Fallback: if no tracked relationships yet, use neighbor pairs
+      if (strong.length === 0) {
+        const agentIds = Array.from(this.agents.keys());
+        for (const aid of agentIds.sort(() => Math.random() - 0.5).slice(0, 10)) {
+          const neighbors = this.getNeighbors(aid);
+          if (neighbors.length > 0) {
+            const neighbor = neighbors[Math.floor(Math.random() * neighbors.length)];
+            strong.push({
+              id: `fallback-${aid}-${neighbor}`,
+              simId: this.config.simId,
+              sourceAgentId: aid,
+              targetAgentId: neighbor,
+              type: 'INFLUENCES' as RelationshipType,
+              strength: 0.3,
+              tickCreated: this.tick,
+              tickUpdated: this.tick,
+            });
+          }
+        }
+      }
+
+      // Pick up to 5 random relationships to generate DMs
+      const candidates = strong.sort(() => Math.random() - 0.5).slice(0, 5);
+
+      for (const rel of candidates) {
+        if (Math.random() > 0.65) continue; // 65% chance per candidate
+
+        const sender = this.agents.get(rel.sourceAgentId);
+        const receiver = this.agents.get(rel.targetAgentId);
+        if (!sender || !receiver) continue;
+
+        const dmTemplates: Record<string, string[]> = {
+          INFLUENCES: [
+            `Hey, I noticed you've been thinking about ${receiver.state} too. We should talk.`,
+            `I believe ${sender.state} is the right path. Have you considered it?`,
+            `Just wanted to check in — I think we're aligned on this.`,
+          ],
+          SUPPORTS: [
+            `Glad we're on the same page about ${sender.state}.`,
+            `Your perspective on this really resonated with me.`,
+            `We should coordinate — our views align closely.`,
+          ],
+          DISAGREES_WITH: [
+            `I fundamentally disagree with your stance on ${receiver.state}.`,
+            `Can we talk? I think you're missing something important here.`,
+            `Our views are very different — maybe worth a direct conversation.`,
+          ],
+        };
+
+        const templates = dmTemplates[rel.type] ?? dmTemplates['INFLUENCES'];
+        const content = templates[Math.floor(Math.random() * templates.length)];
+
+        const dm: DirectMessage = {
+          id: uuidv4(),
+          simId: this.config.simId,
+          fromAgentId: sender.agentId,
+          toAgentId: receiver.agentId,
+          fromAuthor: sender.personality.name,
+          toAuthor: receiver.personality.name,
+          content,
+          createdAt: new Date().toISOString(),
+        };
+
+        await appendDM(this.config.simId, dm);
+        this.emitDMUpdate(dm);
+      }
+    } catch (err) {
+      console.error('[Engine] performAutoDMs error:', err);
+    }
+  }
+
+  /**
+   * Agents that share the same belief state and are graph-neighbors
+   * may form or join a group together.
+   */
+  private async performAutoGroupFormation(): Promise<void> {
+    try {
+      const agentList = Array.from(this.agents.values());
+
+      // Group agents by their current state
+      const byState: Record<string, Agent[]> = {};
+      for (const agent of agentList) {
+        if (!byState[agent.state]) byState[agent.state] = [];
+        byState[agent.state].push(agent);
+      }
+
+      for (const [state, members] of Object.entries(byState)) {
+        if (members.length < 2) continue; // need at least 2 to form a group
+
+        // Pick a cluster of up to 5 agents in this state
+        const cluster = members.sort(() => Math.random() - 0.5).slice(0, 5);
+        const clusterIds = cluster.map(a => a.agentId);
+
+        // Check if a group for this belief already exists
+        const existing = await findExistingGroup(this.config.simId, state, clusterIds);
+
+        if (existing) {
+          // Add any cluster member not yet in the group
+          let changed = false;
+          for (const agentId of clusterIds) {
+            if (!existing.memberIds.includes(agentId)) {
+              await addMember(this.config.simId, existing.id, agentId);
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            const groups = await getGroups(this.config.simId);
+            this.emitGroupUpdate(groups);
+
+            // New member sends a group greeting
+            const newMember = cluster.find(a => !existing.memberIds.includes(a.agentId));
+            if (newMember) {
+              const greetings = [
+                `Just joined. Glad to find others who share our view on ${state}.`,
+                `Hello everyone. I believe ${state} is the right position.`,
+                `Looking forward to discussing this with the group.`,
+              ];
+              const msg: GroupMessage = {
+                id: uuidv4(),
+                groupId: existing.id,
+                simId: this.config.simId,
+                authorId: newMember.agentId,
+                author: newMember.personality.name,
+                content: greetings[Math.floor(Math.random() * greetings.length)],
+                createdAt: new Date().toISOString(),
+              };
+              await appendGroupMessage(this.config.simId, msg);
+              const groups2 = await getGroups(this.config.simId);
+              this.emitGroupUpdate(groups2, msg);
+            }
+          }
+        } else if (Math.random() < 0.65) {
+          // 65% chance to form a new group
+          const founder = cluster[0];
+          const groupNames: string[] = [
+            `${state} Alliance`,
+            `The ${state} Coalition`,
+            `${founder.personality.name}'s ${state} Circle`,
+            `${state} Collective`,
+          ];
+          const group: AgentGroup = {
+            id: uuidv4(),
+            simId: this.config.simId,
+            name: groupNames[Math.floor(Math.random() * groupNames.length)],
+            description: `A group of agents united by the shared belief: ${state}`,
+            memberIds: clusterIds,
+            createdBy: founder.agentId,
+            createdAt: new Date().toISOString(),
+            sharedBelief: state,
+          };
+
+          await createGroup(this.config.simId, group);
+
+          // Founder sends opening message
+          const openings = [
+            `I've created this group for us to coordinate on ${state}.`,
+            `Welcome everyone. Let's discuss our shared stance on ${state}.`,
+            `This is a private space for those of us who believe in ${state}.`,
+          ];
+          const msg: GroupMessage = {
+            id: uuidv4(),
+            groupId: group.id,
+            simId: this.config.simId,
+            authorId: founder.agentId,
+            author: founder.personality.name,
+            content: openings[Math.floor(Math.random() * openings.length)],
+            createdAt: new Date().toISOString(),
+          };
+          await appendGroupMessage(this.config.simId, msg);
+
+          const groups = await getGroups(this.config.simId);
+          this.emitGroupUpdate(groups, msg);
+        }
+
+        // Members who changed state may leave their group
+        if (Math.random() < 0.2) {
+          const allGroups = await getGroups(this.config.simId);
+          for (const group of allGroups) {
+            for (const memberId of [...group.memberIds]) {
+              const member = this.agents.get(memberId);
+              if (member && group.sharedBelief && member.state !== group.sharedBelief) {
+                // Agent no longer shares the group's belief — 50% chance to leave
+                if (Math.random() < 0.5) {
+                  await removeGroupMember(this.config.simId, group.id, memberId);
+                }
+              }
+            }
+          }
+          const updatedGroups = await getGroups(this.config.simId);
+          this.emitGroupUpdate(updatedGroups);
+        }
+
+        // Group members occasionally send group messages
+        const allGroups = await getGroups(this.config.simId);
+        for (const group of allGroups) {
+          if (group.memberIds.length === 0) continue;
+          if (Math.random() > 0.55) continue; // 55% chance per group per formation check
+
+          const speakerId = group.memberIds[Math.floor(Math.random() * group.memberIds.length)];
+          const speaker = this.agents.get(speakerId);
+          if (!speaker) continue;
+
+          const groupMessages = [
+            `Has anyone else noticed the shift in the network? ${speaker.state} feels like it's spreading.`,
+            `I'm still firmly ${speaker.state}. What about the rest of you?`,
+            `We need to stay aligned on this.`,
+            `The opposition is growing. Let's coordinate.`,
+            `I think our position is stronger than ever.`,
+          ];
+
+          const msg: GroupMessage = {
+            id: uuidv4(),
+            groupId: group.id,
+            simId: this.config.simId,
+            authorId: speakerId,
+            author: speaker.personality.name,
+            content: groupMessages[Math.floor(Math.random() * groupMessages.length)],
+            createdAt: new Date().toISOString(),
+          };
+          await appendGroupMessage(this.config.simId, msg);
+          const finalGroups = await getGroups(this.config.simId);
+          this.emitGroupUpdate(finalGroups, msg);
+        }
+
+        break; // process one state cluster per call to avoid too much work
+      }
+    } catch (err) {
+      console.error('[Engine] performAutoGroupFormation error:', err);
+    }
+  }
+
   private async performAutoAgentAction(agent: Agent): Promise<void> {
     try {
       const feedSnapshot = await readFeed(this.config.simId);
       const posts = feedSnapshot.posts;
 
-      if (posts.length === 0) {
+       if (posts.length === 0) {
+         const traits = {
+           credulity: agent.personality.credulity,
+           influence: agent.personality.influence,
+           stubbornness: agent.personality.stubbornness,
+           activity: agent.personality.activity,
+         };
+         const postData = await gemini.generateDiscussionPost(
+           agent.personality.name,
+           agent.state,
+           agent.beliefs,
+           agent.memory,
+           this.theme.THEME_NAME,
+           this.config.modelName,
+           agent.role,
+           traits
+         );
+        
+        await this.createFeedPost(
+          agent.agentId,
+          postData.title,
+          postData.content,
+          postData.tags
+        );
         return;
       }
 
-      const targetPost = posts[Math.floor(Math.random() * posts.length)];
-      if (Math.random() < 0.5) {
+      const rand = Math.random();
+      
+       if (rand < 0.35) {
+         const traits = {
+           credulity: agent.personality.credulity,
+           influence: agent.personality.influence,
+           stubbornness: agent.personality.stubbornness,
+           activity: agent.personality.activity,
+         };
+         const postData = await gemini.generateDiscussionPost(
+           agent.personality.name,
+           agent.state,
+           agent.beliefs,
+           agent.memory,
+           this.theme.THEME_NAME,
+           this.config.modelName,
+           agent.role,
+           traits
+         );
+        
+        await this.createFeedPost(
+          agent.agentId,
+          postData.title,
+          postData.content,
+          postData.tags
+        );
+      } else if (rand < 0.50) {
+        const targetPost = posts[Math.floor(Math.random() * posts.length)];
         await this.addFeedLike(targetPost.id, agent.agentId);
-      } else {
+       } else if (rand < 0.65) {
+         const targetPost = posts[Math.floor(Math.random() * posts.length)];
+         const traits = {
+           credulity: agent.personality.credulity,
+           influence: agent.personality.influence,
+           stubbornness: agent.personality.stubbornness,
+           activity: agent.personality.activity,
+         };
+         const commentText = await gemini.generateCommentText(
+           agent.personality.name,
+           agent.state,
+           agent.beliefs,
+           targetPost.title,
+           targetPost.content,
+           targetPost.author,
+           this.theme.THEME_NAME,
+           this.config.modelName,
+           agent.role,
+           traits
+         );
+        
         const comment: DiscussionComment = {
           id: uuidv4(),
           author: agent.personality.name,
           author_type: 'agent',
-          message: `${agent.personality.name} reacts to this discussion.`,
+          message: commentText,
           created_at: new Date().toISOString(),
           agentId: agent.agentId,
         };
         await this.addFeedComment(targetPost.id, comment, agent.agentId);
       }
     } catch (error) {
+      const errorMsg = String(error);
+      if ((error as any).isQuotaError || errorMsg.includes('QUOTA_EXCEEDED')) {
+        console.log('[Engine] API quota exceeded - skipping agent action');
+        return;
+      }
       console.error('[Engine] Auto agent action failed:', error);
     }
   }

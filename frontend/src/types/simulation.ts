@@ -63,6 +63,7 @@ export interface SimConfig {
   topology: string;
   tick_rate: number;
   personalities: PersonalityDef[];
+  modelName?: string;
 }
 
 // WebSocket message types
@@ -176,7 +177,61 @@ export interface RelationshipUpdateMessage {
   data: Relationship;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage;
+export interface ApiCallMessage {
+  type: 'api_call';
+  count: number;
+  tokensUsed?: number;
+  reason?: string;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage;
+
+// ── Direct Messages ───────────────────────────────────────────────────────
+
+export interface DirectMessage {
+  id: string;
+  simId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  fromAuthor: string;
+  toAuthor: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface DirectMessageUpdateMessage {
+  type: 'dm_update';
+  dm: DirectMessage;
+}
+
+// ── Agent Groups ──────────────────────────────────────────────────────────
+
+export interface AgentGroup {
+  id: string;
+  simId: string;
+  name: string;
+  description?: string;
+  memberIds: string[];
+  createdBy: string;
+  createdAt: string;
+  sharedBelief?: string;
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  simId: string;
+  authorId: string;
+  author: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface GroupUpdateMessage {
+  type: 'group_update';
+  groups: AgentGroup[];
+  newMessage?: GroupMessage;
+}
 
 export interface ReasoningTrace {
   personality_influence: string;
@@ -212,4 +267,8 @@ export interface SimState {
   analysisReport: AnalysisReport | null;
   discussionFeed: DiscussionPost[];
   relationships: Relationship[];
+  apiCallCount: number;
+  totalTokensUsed: number;
+  groups: AgentGroup[];
+  directMessages: DirectMessage[];
 }

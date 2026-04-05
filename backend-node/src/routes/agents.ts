@@ -14,6 +14,66 @@ function isConflictError(error: unknown): boolean {
 
 const router = Router({ mergeParams: true });
 
+// ── GET /api/simulations/:simId/agents/:agentId/details ──────────────────────
+// Returns detailed agent information: beliefs, memory, connections, and influence
+router.get(
+  '/:agentId/details',
+  async (req: Request<{ simId: string; agentId: string }>, res: Response) => {
+    try {
+      const { simId, agentId } = req.params;
+
+      const engine = getSimulation(simId);
+      if (!engine) {
+        res.status(404).json({ error: 'Simulation not found' });
+        return;
+      }
+
+      const agent = engine.agents.get(agentId);
+      if (!agent) {
+        res.status(404).json({ error: `Agent ${agentId} not found` });
+        return;
+      }
+
+      const neighbors = engine.getNeighbors(agentId);
+      const neighborAgents = neighbors.map(nId => {
+        const neighbor = engine.agents.get(nId)!;
+        const relationshipType = agent.socialTies.get(nId) || 'neutral';
+        return {
+          id: nId,
+          personality: neighbor.personality.name,
+          role: neighbor.role,
+          state: neighbor.state,
+          influence: neighbor.personality.influence,
+          relationshipType,
+          recentActivity: neighbor.memory.slice(-3), // Last 3 memories for context
+        };
+      });
+
+      const recentEpisodicEvents = agent.episodicMemory.slice(-10).map(e => ({
+        tick: e.tick,
+        event: e.event,
+        impact: e.impact,
+        description: e.description || '',
+      }));
+
+      res.json({
+        id: agentId,
+        personality: agent.personality.name,
+        state: agent.state,
+        emotionalState: agent.emotionalState,
+        memorySummary: agent.memorySummary,
+        recentMemory: recentEpisodicEvents,
+        beliefs: agent.beliefs,
+        connectedAgents: neighborAgents,
+        tick: engine.tick,
+      });
+    } catch (error) {
+      console.error('[Agent Details Error]', error);
+      res.status(500).json({ error: String(error) });
+    }
+  }
+);
+
 // ── GET /api/simulations/:simId/agents/:agentId ──────────────────────────────
 // Returns agent profile: role, personality, beliefs, and like count
 router.get('/:agentId', async (req: Request<{ simId: string; agentId: string }>, res: Response) => {

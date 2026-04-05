@@ -5,7 +5,7 @@ Multi-agent AI simulation platform showcasing dynamic agent behaviors and networ
 ## Project Structure
 
 - `frontend/`: React + TypeScript frontend for visualization.
-- `backend/`: Python-based simulation engine using Gemini AI.
+- `backend-node/`: Node.js-based simulation engine using Gemini AI.
 
 ## License
 

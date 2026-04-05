@@ -44,19 +44,35 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeModels) {
-      setWorldGenModel(activeModels.world_generation_model)
-      setAgentDecisionModel(activeModels.agent_decision_model)
+      setWorldGenModel(activeModels.worldGeneration.modelId)
+      setAgentDecisionModel(activeModels.agentDecision.modelId)
     }
   }, [activeModels])
 
+  // Auto-load models when on the models tab (re-runs when providers finish loading)
+  useEffect(() => {
+    if (activeTab !== 'models') return
+    const connectedProviders = Object.keys(providers).filter(p => getProviderStatus(p) === 'connected')
+    if (connectedProviders.length === 0) return
+    const providerToLoad = connectedProviders.includes(selectedProvider)
+      ? selectedProvider
+      : connectedProviders[0]
+    setSelectedProvider(providerToLoad)
+    fetchModels(providerToLoad)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, providers])
+
   const handleValidateAndSave = async (config: ProviderConfig) => {
     try {
+      await saveConfig(config)
       const isValid = await validateProvider(config)
+      await fetchProviders()
       if (isValid) {
-        await saveConfig(config)
         toast.success(`${config.provider} configured successfully`)
         setShowForm(false)
         setSelectedProvider(config.provider)
+      } else {
+        toast.error(`${config.provider} validation failed`)
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Configuration failed'
@@ -82,7 +98,7 @@ export default function SettingsPage() {
     }
     setSavingModels(true)
     try {
-      await saveActiveModels(worldGenModel, agentDecisionModel)
+      await saveActiveModels(selectedProvider, worldGenModel, agentDecisionModel)
       toast.success('Models updated successfully')
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Save failed'
@@ -125,7 +141,17 @@ export default function SettingsPage() {
           {(['providers', 'models'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setActiveTab(tab)
+                if (tab === 'models') {
+                  const connected = Object.keys(providers).filter(p => getProviderStatus(p) === 'connected')
+                  if (connected.length > 0) {
+                    const p = connected.includes(selectedProvider) ? selectedProvider : connected[0]
+                    setSelectedProvider(p)
+                    fetchModels(p)
+                  }
+                }
+              }}
               style={{
                 padding: '12px 20px',
                 background: activeTab === tab ? 'var(--accent)' : 'var(--bg-surface)',
@@ -255,7 +281,7 @@ export default function SettingsPage() {
                           e.currentTarget.style.borderColor = 'var(--border)'
                         }}
                       >
-                        <div>
+                        <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
                             {name}
                           </div>
@@ -266,7 +292,7 @@ export default function SettingsPage() {
                                 fontWeight: 600,
                               }}
                             >
-                              {info.status === 'connected' ? '✓ Connected' : info.status === 'error' ? '✗ Error' : 'Not Configured'}
+                              {info.status === 'connected' ? '✓ Connected' : info.status === 'error' ? '✗ Error' : '◯ Not Configured'}
                             </span>
                             {info.last_validated && (
                               <span>Last validated: {new Date(info.last_validated).toLocaleDateString()}</span>
@@ -278,28 +304,32 @@ export default function SettingsPage() {
                             </div>
                           )}
                         </div>
-                        <button
-                          onClick={() => handleDeleteProvider(name)}
-                          style={{
-                            padding: '8px 16px',
-                            background: 'rgba(239,68,68,0.1)',
-                            color: '#ef4444',
-                            border: '1px solid rgba(239,68,68,0.3)',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            fontSize: 13,
-                            fontWeight: 600,
-                            transition: 'all 0.15s',
-                          }}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.background = 'rgba(239,68,68,0.2)'
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.background = 'rgba(239,68,68,0.1)'
-                          }}
-                        >
-                          Delete
-                        </button>
+                        {info.status !== 'not_configured' && (
+                          <button
+                            onClick={() => handleDeleteProvider(name)}
+                            style={{
+                              padding: '8px 16px',
+                              background: 'rgba(239,68,68,0.1)',
+                              color: '#ef4444',
+                              border: '1px solid rgba(239,68,68,0.3)',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                              marginLeft: 16,
+                            }}
+                            onMouseEnter={e => {
+                              e.currentTarget.style.background = 'rgba(239,68,68,0.2)'
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.background = 'rgba(239,68,68,0.1)'
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -309,7 +339,7 @@ export default function SettingsPage() {
           )}
 
           {activeTab === 'models' && (
-            <div>
+              <div>
               <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Select Models</h2>
 
               {errorModels && (
@@ -328,66 +358,102 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              <div style={{ marginBottom: 24 }}>
-                <label className="label">Choose Provider</label>
-                <select
-                  value={selectedProvider}
-                  onChange={e => {
-                    setSelectedProvider(e.currentTarget.value)
-                    fetchModels(e.currentTarget.value)
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    background: 'var(--bg-surface)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 10,
-                    fontSize: 14,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {Object.keys(providers)
-                    .filter(p => getProviderStatus(p) === 'connected')
-                    .map(p => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              {loadingModels ? (
-                <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px 0' }}>
-                  Loading models...
+              {Object.keys(providers).filter(p => getProviderStatus(p) === 'connected').length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px 20px', background: 'var(--bg-surface)', borderRadius: 10 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>No providers connected yet</div>
+                  <div style={{ fontSize: 13 }}>Configure a provider in the "Providers" tab first</div>
                 </div>
               ) : (
                 <>
-                  <div style={{ marginBottom: 32 }}>
-                    <ModelSelector
-                      label="World Generation Model"
-                      models={models}
-                      selectedModel={worldGenModel}
-                      onSelect={setWorldGenModel}
-                      disabled={models.length === 0}
-                      loading={loadingModels}
-                    />
+                  <div style={{ marginBottom: 24 }}>
+                    <label className="label">Choose Provider</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        value={
+                          Object.keys(providers).filter(p => getProviderStatus(p) === 'connected').includes(selectedProvider)
+                            ? selectedProvider
+                            : Object.keys(providers).filter(p => getProviderStatus(p) === 'connected')[0] ?? ''
+                        }
+                        onChange={e => {
+                          setSelectedProvider(e.currentTarget.value)
+                          fetchModels(e.currentTarget.value)
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '10px 14px',
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 10,
+                          fontSize: 14,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {Object.keys(providers)
+                          .filter(p => getProviderStatus(p) === 'connected')
+                          .map(p => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        onClick={() => {
+                          const connected = Object.keys(providers).filter(p => getProviderStatus(p) === 'connected')
+                          const p = connected.includes(selectedProvider) ? selectedProvider : connected[0]
+                          if (p) fetchModels(p)
+                        }}
+                        disabled={loadingModels}
+                        style={{
+                          padding: '10px 16px',
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-secondary)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 10,
+                          fontSize: 13,
+                          cursor: loadingModels ? 'not-allowed' : 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title="Reload models"
+                      >
+                        {loadingModels ? '...' : '⟳ Load'}
+                      </button>
+                    </div>
                   </div>
 
-                  <div style={{ marginBottom: 32 }}>
-                    <ModelSelector
-                      label="Agent Decision Making Model"
-                      models={models}
-                      selectedModel={agentDecisionModel}
-                      onSelect={setAgentDecisionModel}
-                      disabled={models.length === 0}
-                      loading={loadingModels}
-                    />
-                  </div>
+                  {loadingModels ? (
+                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '40px 0' }}>
+                      Loading models...
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ marginBottom: 32 }}>
+                        <ModelSelector
+                          label="World Generation Model"
+                          models={models}
+                          selectedModel={worldGenModel}
+                          onSelect={setWorldGenModel}
+                          disabled={models.length === 0}
+                          loading={loadingModels}
+                        />
+                      </div>
 
-                  <button onClick={handleSaveModels} className="btn-primary" disabled={savingModels || !worldGenModel || !agentDecisionModel}>
-                    {savingModels ? '...' : 'Save Model Selection'}
-                  </button>
+                      <div style={{ marginBottom: 32 }}>
+                        <ModelSelector
+                          label="Agent Decision Making Model"
+                          models={models}
+                          selectedModel={agentDecisionModel}
+                          onSelect={setAgentDecisionModel}
+                          disabled={models.length === 0}
+                          loading={loadingModels}
+                        />
+                      </div>
+
+                      <button onClick={handleSaveModels} className="btn-primary" disabled={savingModels || !worldGenModel || !agentDecisionModel}>
+                        {savingModels ? '...' : 'Save Model Selection'}
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </div>

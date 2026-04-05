@@ -8,7 +8,7 @@ interface SimulationSidebarProps {
 }
 
 const RELATIONSHIP_COLOR: Record<string, string> = {
-  INFLUENCES: '#4a90e2',
+  INFLUENCES: '#00a8b5',
   SUPPORTS: '#22c55e',
   DISAGREES_WITH: '#ef4444',
   RELATES_TO: '#888',
@@ -151,69 +151,179 @@ function RelationshipView({ rel }: { rel: Relationship }) {
 }
 
 function AgentReasoningView({ agent, timeline }: { agent: AgentProfile; timeline: EpisodicEntry[] }) {
-  const tracedEntries = timeline.filter((e): e is EpisodicEntry & { reasoning_trace: NonNullable<EpisodicEntry['reasoning_trace']> } =>
-    !!e.reasoning_trace
-  )
+  const allEntries = timeline.slice().reverse()
 
   return (
-    <div className="fade-in">
+    <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Agent header */}
       <div style={{
         padding: '12px 14px',
         background: 'var(--bg-surface)',
         borderRadius: 10,
         border: '1px solid var(--border)',
-        marginBottom: 20,
+        marginBottom: 16,
       }}>
         <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Agent {agent.id}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
           <span style={{ textTransform: 'capitalize' }}>{agent.role}</span>
           {agent.personality && <span> · {agent.personality}</span>}
         </div>
+        <div style={{
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+        }}>
+          {agent.beliefs && agent.beliefs.length > 0 && (
+            <span style={{
+              fontSize: 10,
+              padding: '2px 6px',
+              borderRadius: 3,
+              background: 'rgba(52, 152, 219, 0.2)',
+              color: '#3498db',
+            }}>
+              {agent.beliefs.length} beliefs
+            </span>
+          )}
+          <span style={{
+            fontSize: 10,
+            padding: '2px 6px',
+            borderRadius: 3,
+            background: 'rgba(255,255,255,0.08)',
+            color: 'var(--text-muted)',
+          }}>
+            {timeline.length} events
+          </span>
+        </div>
       </div>
 
-      {tracedEntries.length > 0 ? (
-        <>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Reasoning traces ({tracedEntries.length})
+      {/* Activity log - scrollable */}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        {allEntries.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '20px' }}>
+            No activity recorded yet.
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {tracedEntries.slice(-5).reverse().map((entry, i) => (
-              <div key={i} style={{
-                padding: '12px 14px',
-                background: 'var(--bg-surface)',
-                borderRadius: 10,
-                border: '1px solid var(--border)',
-              }}>
-                <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, marginBottom: 8 }}>
-                  Tick {entry.tick} — {entry.event}
-                  {entry.confidence !== undefined && (
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>
-                      ({Math.round(entry.confidence * 100)}% confident)
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {allEntries.map((entry, i) => {
+              const hasReasoning = !!entry.reasoning_trace
+              const isHighImpact = entry.impact === 'high'
+
+              return (
+                <div
+                  key={i}
+                  style={{
+                    padding: '10px 12px',
+                    background: isHighImpact ? 'rgba(239, 68, 68, 0.08)' : 'var(--bg-surface)',
+                    borderRadius: 8,
+                    border: isHighImpact ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border)',
+                    borderLeft: hasReasoning ? '3px solid var(--accent)' : '3px solid var(--text-muted)',
+                  }}
+                >
+                  {/* Event header with tick and AI indicator */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      color: 'var(--text-muted)',
+                      padding: '1px 6px',
+                      background: 'rgba(255,255,255,0.08)',
+                      borderRadius: 3,
+                    }}>
+                      T{entry.tick}
                     </span>
+                    {hasReasoning && (
+                      <span style={{
+                        fontSize: 9,
+                        padding: '1px 6px',
+                        borderRadius: 3,
+                        background: 'rgba(168, 85, 247, 0.2)',
+                        color: '#a855f7',
+                        fontWeight: 600,
+                      }}>
+                        ✦ AI
+                      </span>
+                    )}
+                    {isHighImpact && (
+                      <span style={{
+                        fontSize: 9,
+                        padding: '1px 6px',
+                        borderRadius: 3,
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        color: '#ef4444',
+                        fontWeight: 600,
+                      }}>
+                        🔥 High Impact
+                      </span>
+                    )}
+                    {entry.confidence !== undefined && (
+                      <span style={{
+                        fontSize: 9,
+                        marginLeft: 'auto',
+                        color: 'var(--text-muted)',
+                        fontStyle: 'italic',
+                      }}>
+                        {Math.round(entry.confidence * 100)}% confident
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Event description */}
+                  <div style={{
+                    fontSize: 12,
+                    color: 'var(--text-primary)',
+                    fontWeight: 500,
+                    marginBottom: entry.reasoning_trace || entry.influence ? 8 : 0,
+                    lineHeight: 1.4,
+                  }}>
+                    {entry.event}
+                  </div>
+
+                  {/* Influence/reason */}
+                  {entry.influence && (
+                    <div style={{
+                      fontSize: 11,
+                      color: 'var(--text-secondary)',
+                      padding: '6px 8px',
+                      background: 'rgba(255,255,255,0.03)',
+                      borderRadius: 4,
+                      marginBottom: entry.reasoning_trace ? 8 : 0,
+                      borderLeft: '2px solid var(--accent2)',
+                      fontStyle: 'italic',
+                    }}>
+                      💭 {entry.influence}
+                    </div>
+                  )}
+
+                  {/* Detailed reasoning trace */}
+                  {entry.reasoning_trace && (
+                    <div style={{
+                      fontSize: 10,
+                      color: 'var(--text-secondary)',
+                      padding: '8px',
+                      background: 'rgba(168, 85, 247, 0.08)',
+                      borderRadius: 4,
+                      border: '1px solid rgba(168, 85, 247, 0.2)',
+                      display: 'grid',
+                      gap: 6,
+                    }}>
+                      {Object.entries(entry.reasoning_trace).map(([key, val]) => (
+                        <div key={key}>
+                          <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 2, opacity: 0.8 }}>
+                            {key.replace(/_/g, ' ')}
+                          </div>
+                          <div style={{ fontSize: 10, lineHeight: 1.3, color: 'var(--text-secondary)' }}>
+                            {String(val)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {Object.entries(entry.reasoning_trace).map(([key, val]) => (
-                    <div key={key}>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
-                        {key.replace(/_/g, ' ')}
-                      </div>
-                       <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{String(val)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
-        </>
-      ) : (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
-          No reasoning traces yet.
-          <br />
-          <span style={{ fontSize: 11 }}>Traces appear after AI-driven decisions.</span>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

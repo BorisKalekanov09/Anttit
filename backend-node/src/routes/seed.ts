@@ -1,16 +1,20 @@
 import { Router, Request, Response } from 'express';
 import type { SeedRequest, SeedResponse } from '../types.js';
 import { generateSeedConfig, generatePersonalities } from '../ai/gemini.js';
+import { configManager } from '../lib/config-manager.js';
 
 const router = Router();
 
 router.post('/', async (req: Request<{}, {}, SeedRequest>, res: Response) => {
   try {
     const { text, theme } = req.body;
-
-    const defaultPersonalities = await generatePersonalities(theme, text);
     
-    const seedConfig = await generateSeedConfig(text, theme, defaultPersonalities);
+    const activeModels = configManager.getActiveModels();
+    const modelName = activeModels?.worldGeneration?.modelId;
+
+    const defaultPersonalities = await generatePersonalities(theme, text, modelName);
+    
+    const seedConfig = await generateSeedConfig(text, theme, defaultPersonalities, modelName);
 
     const response: SeedResponse = {
       suggestedConfig: {
@@ -28,6 +32,11 @@ router.post('/', async (req: Request<{}, {}, SeedRequest>, res: Response) => {
 
     res.json(response);
   } catch (error) {
+    const errorMsg = String(error);
+    if (errorMsg.includes('API_QUOTA_EXCEEDED')) {
+      res.status(429).json({ error: 'API quota exhausted. Please wait a few minutes before trying again.' });
+      return;
+    }
     res.status(500).json({ error: String(error) });
   }
 });

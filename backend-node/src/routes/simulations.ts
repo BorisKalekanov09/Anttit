@@ -55,6 +55,18 @@ router.get('/:simId/snapshot', (req: Request<{ simId: string }>, res: Response) 
   res.json(engine.snapshot());
 });
 
+router.get('/:simId/metrics', (req: Request<{ simId: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+  res.json({
+    apiCallCount: engine.apiCallCount,
+    totalTokensUsed: engine.totalTokensUsed,
+  });
+});
+
 router.post('/:simId/control', async (req: Request<{ simId: string }, {}, ControlRequest>, res: Response) => {
   const engine = getSimulation(req.params.simId);
   if (!engine) {
@@ -94,6 +106,23 @@ router.post('/:simId/inject', (req: Request<{ simId: string }, {}, InjectEventRe
 
   engine.inject(req.body.event_type, req.body.payload);
   res.json({ status: 'ok' });
+});
+
+router.post('/:simId/inject-belief', (req: Request<{ simId: string }, {}, { belief: string }>, res: Response) => {
+  const engine = getSimulation(req.params.simId);
+  if (!engine) {
+    res.status(404).json({ error: 'Simulation not found' });
+    return;
+  }
+
+  const { belief } = req.body;
+  if (!belief || !belief.trim()) {
+    res.status(400).json({ error: 'Belief text is required' });
+    return;
+  }
+
+  engine.inject('belief_injection', { belief: belief.trim() });
+  res.json({ status: 'ok', message: 'Belief injected to all agents' });
 });
 
 router.delete('/:simId', (req: Request<{ simId: string }>, res: Response) => {

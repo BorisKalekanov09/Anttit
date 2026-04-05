@@ -281,14 +281,14 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
 
                   {post.tags && post.tags.length > 0 && (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {post.tags.map((tag, idx) => {
-                        const normalized = normalizeTag(tag)
-                        const tagColor = normalized === 'news' ? 'rgba(34, 197, 94, 0.15)' : 
-                                       normalized === 'discussion' ? 'rgba(124, 109, 250, 0.15)' : 
-                                       'rgba(122, 156, 200, 0.1)'
-                        const tagTextColor = normalized === 'news' ? '#22c55e' : 
-                                           normalized === 'discussion' ? '#7c6dfa' : 
-                                           'var(--text-secondary)'
+                       {post.tags.map((tag, idx) => {
+                         const normalized = normalizeTag(tag)
+                         const tagColor = normalized === 'news' ? 'rgba(34, 197, 94, 0.15)' : 
+                                        normalized === 'discussion' ? 'rgba(0, 168, 181, 0.15)' : 
+                                        'rgba(122, 156, 200, 0.1)'
+                         const tagTextColor = normalized === 'news' ? '#22c55e' : 
+                                            normalized === 'discussion' ? '#00a8b5' : 
+                                            'var(--text-secondary)'
                         return (
                           <span
                             key={idx}
@@ -364,16 +364,16 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
                 </div>
 
                 {lastTwoComments.length > 0 && (
-                  <div
-                    style={{
-                      background: 'rgba(99, 179, 255, 0.03)',
-                      borderLeft: '2px solid var(--border)',
-                      padding: '8px 10px',
-                      borderRadius: 6,
-                      marginBottom: expandedCommentInput === post.id ? 10 : 0,
-                      fontSize: 12,
-                    }}
-                  >
+                   <div
+                     style={{
+                       background: 'rgba(0, 168, 181, 0.05)',
+                       borderLeft: '2px solid var(--border)',
+                       padding: '8px 10px',
+                       borderRadius: 6,
+                       marginBottom: expandedCommentInput === post.id ? 10 : 0,
+                       fontSize: 12,
+                     }}
+                   >
                     {lastTwoComments.map(comment => (
                        <div
                          key={comment.id}

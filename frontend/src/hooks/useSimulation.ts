@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage } from '../types/simulation'
+import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage, DirectMessage, AgentGroup, GroupMessage } from '../types/simulation'
 
-const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://${window.location.hostname}:3001`
+// Re-export for consumers
+export type { DirectMessage, AgentGroup, GroupMessage }
+
+const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://${window.location.hostname}:3003`
 
 interface AgentProfileCache {
   data: AgentProfile
@@ -19,6 +22,8 @@ export function useSimulation(simId: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null)
   const agentProfileCacheRef = useRef<Map<string, AgentProfileCache>>(new Map())
   const agentTimelineCacheRef = useRef<Map<string, AgentTimelineCache>>(new Map())
+  const apiCallCountRef = useRef(0)
+  const totalTokensUsedRef = useRef(0)
   
   const [state, setState] = useState<SimState>({
     simId: simId ?? '',
@@ -32,7 +37,21 @@ export function useSimulation(simId: string | undefined) {
     analysisReport: null,
     discussionFeed: [],
     relationships: [],
+    apiCallCount: apiCallCountRef.current,
+    totalTokensUsed: totalTokensUsedRef.current,
+    groups: [],
+    directMessages: [],
   })
+
+  const trackApiCall = useCallback((tokensUsed: number = 0) => {
+    apiCallCountRef.current += 1
+    totalTokensUsedRef.current += tokensUsed
+    setState(s => ({
+      ...s,
+      apiCallCount: apiCallCountRef.current,
+      totalTokensUsed: totalTokensUsedRef.current,
+    }))
+  }, [])
 
   useEffect(() => {
     if (!simId) return
@@ -68,6 +87,12 @@ export function useSimulation(simId: string | undefined) {
           ...s,
           discussionFeed: msg.posts || s.discussionFeed,
         }))
+      } else if (msg.type === 'api_call') {
+        setState(s => ({
+          ...s,
+          apiCallCount: (msg as any).count || s.apiCallCount,
+          totalTokensUsed: (msg as any).tokensUsed || s.totalTokensUsed,
+        }))
       } else if (msg.type === 'relationship_update') {
         setState(s => {
           const updated = s.relationships.filter(
@@ -75,6 +100,13 @@ export function useSimulation(simId: string | undefined) {
           )
           return { ...s, relationships: [...updated, msg.data] }
         })
+      } else if (msg.type === 'dm_update') {
+        setState(s => ({
+          ...s,
+          directMessages: [...s.directMessages, msg.dm].slice(-500),
+        }))
+      } else if (msg.type === 'group_update') {
+        setState(s => ({ ...s, groups: msg.groups }))
       }
     }
 
@@ -103,20 +135,23 @@ export function useSimulation(simId: string | undefined) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event_type, payload }),
     })
-  }, [simId])
+    trackApiCall()
+  }, [simId, trackApiCall])
 
   const snapshot = useCallback(async () => {
     const res = await fetch(`/api/simulations/${simId}/snapshot`)
+    trackApiCall()
     return await res.json()
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const likePost = useCallback(async (postId: string) => {
     const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/like`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     })
+    trackApiCall()
     return await res.json()
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const commentPost = useCallback(async (postId: string, message: string) => {
     const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/comment`, {
@@ -124,8 +159,9 @@ export function useSimulation(simId: string | undefined) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
     })
+    trackApiCall()
     return await res.json()
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const fetchAgentProfile = useCallback(async (agentId: string): Promise<AgentProfile | null> => {
     try {
@@ -142,13 +178,14 @@ export function useSimulation(simId: string | undefined) {
         data: profile,
         timestamp: Date.now(),
       })
+      trackApiCall()
       
       return profile
     } catch (error) {
       console.error('Failed to fetch agent profile:', error)
       return null
     }
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const fetchAgentTimeline = useCallback(async (agentId: string, offset = 0, limit = 20) => {
     try {
@@ -167,13 +204,14 @@ export function useSimulation(simId: string | undefined) {
         limit,
         timestamp: Date.now(),
       })
+      trackApiCall()
       
       return timelineData
     } catch (error) {
       console.error('Failed to fetch agent timeline:', error)
       return null
     }
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const likeAgentProfile = useCallback(async (agentId: string): Promise<AgentProfile | null> => {
     try {
@@ -183,6 +221,8 @@ export function useSimulation(simId: string | undefined) {
       })
       if (res.status === 409) return null
       if (!res.ok) return null
+      
+      trackApiCall()
       
       const updatedProfile: AgentProfile = await res.json()
       agentProfileCacheRef.current.set(agentId, {
@@ -195,7 +235,7 @@ export function useSimulation(simId: string | undefined) {
       console.error('Failed to like agent profile:', error)
       return null
     }
-  }, [simId])
+  }, [simId, trackApiCall])
 
   const clearAgentCache = useCallback((agentId?: string) => {
     if (agentId) {
@@ -207,10 +247,97 @@ export function useSimulation(simId: string | undefined) {
     }
   }, [])
 
-  return { 
-    state, 
-    control, 
-    inject, 
+  const fetchDMConversation = useCallback(async (agentA: string, agentB: string): Promise<DirectMessage[]> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/dms/conversation/${agentA}/${agentB}`)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.dms ?? []
+    } catch {
+      return []
+    }
+  }, [simId])
+
+  const sendDM = useCallback(async (fromAgentId: string, toAgentId: string, content: string): Promise<DirectMessage | null> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/dms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromAgentId, toAgentId, content }),
+      })
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }, [simId])
+
+  const fetchGroups = useCallback(async (): Promise<AgentGroup[]> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/groups`)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.groups ?? []
+    } catch {
+      return []
+    }
+  }, [simId])
+
+  const fetchGroupMessages = useCallback(async (groupId: string): Promise<GroupMessage[]> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/groups/${groupId}/messages`)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.messages ?? []
+    } catch {
+      return []
+    }
+  }, [simId])
+
+  const sendGroupMessage = useCallback(async (groupId: string, agentId: string, content: string): Promise<GroupMessage | null> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/groups/${groupId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId, content }),
+      })
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }, [simId])
+
+  const joinGroup = useCallback(async (groupId: string, agentId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/groups/${groupId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }, [simId])
+
+  const leaveGroup = useCallback(async (groupId: string, agentId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/simulations/${simId}/groups/${groupId}/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }, [simId])
+
+  return {
+    state,
+    control,
+    inject,
     snapshot,
     likePost,
     commentPost,
@@ -218,5 +345,12 @@ export function useSimulation(simId: string | undefined) {
     fetchAgentTimeline,
     likeAgentProfile,
     clearAgentCache,
+    fetchDMConversation,
+    sendDM,
+    fetchGroups,
+    fetchGroupMessages,
+    sendGroupMessage,
+    joinGroup,
+    leaveGroup,
   }
 }

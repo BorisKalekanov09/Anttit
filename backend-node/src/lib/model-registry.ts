@@ -103,25 +103,32 @@ const MODELS: ProviderCatalog = {
   ],
   groq: [
     {
-      id: 'mixtral-8x7b-32768',
-      name: 'Mixtral 8x7B',
-      provider: 'groq',
-      category: 'both',
-      contextWindow: 32768,
-    },
-    {
       id: 'llama-3.3-70b-versatile',
       name: 'Llama 3.3 70B',
       provider: 'groq',
       category: 'both',
-      contextWindow: 8192,
+      contextWindow: 128000,
     },
     {
-      id: 'llama-3.1-70b-versatile',
-      name: 'Llama 3.1 70B',
+      id: 'llama-3.1-8b-instant',
+      name: 'Llama 3.1 8B Instant',
+      provider: 'groq',
+      category: 'both',
+      contextWindow: 128000,
+    },
+    {
+      id: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      name: 'Llama 4 Scout 17B',
       provider: 'groq',
       category: 'both',
       contextWindow: 131072,
+    },
+    {
+      id: 'qwen/qwen3-32b',
+      name: 'Qwen 3 32B',
+      provider: 'groq',
+      category: 'both',
+      contextWindow: 32768,
     },
   ],
   openrouter: [

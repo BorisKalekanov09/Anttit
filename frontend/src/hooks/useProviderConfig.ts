@@ -9,12 +9,13 @@ export interface Provider {
 
 export interface ProviderConfig {
   provider: string
-  api_key?: string
-  base_url?: string // for Ollama
-  model_name?: string // for Ollama
+  apiKey?: string
+  baseUrl?: string // for Ollama
+  modelName?: string // for Ollama
 }
 
 export interface AIModel {
+  id: string
   name: string
   context_window?: number
   cost_per_1k?: number
@@ -22,8 +23,8 @@ export interface AIModel {
 }
 
 export interface ActiveModels {
-  world_generation_model: string
-  agent_decision_model: string
+  worldGeneration: { provider: string; modelId: string }
+  agentDecision: { provider: string; modelId: string }
 }
 
 interface UseProviderConfigReturn {
@@ -48,7 +49,7 @@ interface UseProviderConfigReturn {
   fetchActiveModels: () => Promise<void>
   validateProvider: (config: ProviderConfig) => Promise<boolean>
   saveConfig: (config: ProviderConfig) => Promise<void>
-  setActiveModels: (worldGenModel: string, agentDecisionModel: string) => Promise<void>
+  setActiveModels: (provider: string, worldGenModel: string, agentDecisionModel: string) => Promise<void>
   deleteProvider: (provider: string) => Promise<void>
 }
 
@@ -87,10 +88,17 @@ export function useProviderConfig(): UseProviderConfigReturn {
     setLoadingModels(true)
     setErrorModels(null)
     try {
-      const res = await fetch(`/api/models/${provider}`)
+      const res = await fetch(`/api/config/models/${provider.toLowerCase()}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      setModels(data.models || [])
+      // Map backend ModelInfo shape to frontend AIModel shape
+      const mapped: AIModel[] = (data.models || []).map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        context_window: m.contextWindow,
+        cost_per_1k: m.costPer1kTokens?.input,
+      }))
+      setModels(mapped)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to fetch models'
       setErrorModels(msg)
@@ -125,12 +133,16 @@ export function useProviderConfig(): UseProviderConfigReturn {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.detail || `Validation failed: HTTP ${res.status}`)
+        const errorMsg = err.error || `Validation failed: HTTP ${res.status}`
+        setErrorValidation(errorMsg)
+        console.error(`Validation failed for ${config.provider}:`, errorMsg)
+        return false
       }
       return true
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Validation failed'
       setErrorValidation(msg)
+      console.error(`Validation error for ${config.provider}:`, msg)
       return false
     } finally {
       setValidating(false)
@@ -147,7 +159,7 @@ export function useProviderConfig(): UseProviderConfigReturn {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.detail || `Save failed: HTTP ${res.status}`)
+        throw new Error(err.error || `Save failed: HTTP ${res.status}`)
       }
       // Refresh providers list after save
       await fetchProviders()
@@ -159,14 +171,15 @@ export function useProviderConfig(): UseProviderConfigReturn {
   }, [fetchProviders])
 
   const setActiveModelsAction = useCallback(
-    async (worldGenModel: string, agentDecisionModel: string) => {
+    async (provider: string, worldGenModel: string, agentDecisionModel: string) => {
+      const providerLower = provider.toLowerCase()
       try {
         const res = await fetch('/api/config/set-active-models', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            world_generation_model: worldGenModel,
-            agent_decision_model: agentDecisionModel,
+            worldGeneration: { provider: providerLower, modelId: worldGenModel },
+            agentDecision: { provider: providerLower, modelId: agentDecisionModel },
           }),
         })
         if (!res.ok) {

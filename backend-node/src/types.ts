@@ -221,7 +221,61 @@ export interface RelationshipUpdateMessage {
   data: Relationship;
 }
 
-export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage;
+export interface ApiCallMessage {
+  type: 'api_call';
+  count: number;
+  tokensUsed?: number;
+  reason?: string;
+}
+
+export type SimMessage = InitMessage | TickMessage | AnalysisMessage | FeedUpdateMessage | BeliefUpdateMessage | RelationshipUpdateMessage | ApiCallMessage | DirectMessageUpdateMessage | GroupUpdateMessage;
+
+// ── Direct Messages ───────────────────────────────────────────────────────
+
+export interface DirectMessage {
+  id: string;
+  simId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  fromAuthor: string;     // agent personality name
+  toAuthor: string;       // agent personality name
+  content: string;
+  createdAt: string;      // ISO timestamp
+}
+
+export interface DirectMessageUpdateMessage {
+  type: 'dm_update';
+  dm: DirectMessage;
+}
+
+// ── Agent Groups ──────────────────────────────────────────────────────────
+
+export interface AgentGroup {
+  id: string;
+  simId: string;
+  name: string;
+  description?: string;
+  memberIds: string[];    // agent IDs
+  createdBy: string;      // agent ID that created the group
+  createdAt: string;      // ISO timestamp
+  sharedBelief?: string;  // the state/belief that united this group
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  simId: string;
+  authorId: string;       // agent ID
+  author: string;         // agent personality name
+  content: string;
+  createdAt: string;      // ISO timestamp
+}
+
+export interface GroupUpdateMessage {
+  type: 'group_update';
+  groups: AgentGroup[];
+  newMessage?: GroupMessage;
+}
 
 // ── API Request/Response Types ────────────────────────────────────────────
 
