@@ -22,12 +22,14 @@ router.post('/', async (req: Request<{}, {}, SeedRequest>, res: Response) => {
         theme,
         initial_state_distribution: seedConfig.initial_state_distribution,
         seed_fraction: seedConfig.seed_fraction,
+        ideologicalGroups: seedConfig.ideologicalGroups,
       },
       suggestedPersonalities: defaultPersonalities.map((p) => ({
         ...p,
         suggested_percentage: seedConfig.personality_mix[p.name] || p.suggested_percentage,
       })),
       seedRationale: `Based on your scenario "${text.slice(0, 100)}${text.length > 100 ? '...' : ''}", we suggest ${seedConfig.agent_count} agents with a seed fraction of ${Math.round(seedConfig.seed_fraction * 100)}%. This distribution reflects the dynamics typically seen in ${theme} scenarios.`,
+      ideologicalGroups: seedConfig.ideologicalGroups,
     };
 
     res.json(response);

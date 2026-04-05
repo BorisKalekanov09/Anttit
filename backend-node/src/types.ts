@@ -16,6 +16,10 @@ export interface ReasoningTrace {
 
 export type AgentRole = 'default' | 'influencer' | 'skeptic' | 'bot' | 'follower';
 
+// ── Content Type (Viral Mechanics) ────────────────────────────────────────
+
+export type ContentType = 'emotional' | 'logical' | 'authority' | 'social';
+
 export interface RoleMix {
   influencer: number;
   skeptic: number;
@@ -52,6 +56,7 @@ export interface SimulationConfig {
   roleMix?: RoleMix;
   initial_state_distribution?: Record<string, number>;
   seed_fraction?: number;
+  ideologicalGroups?: string[];  // LLM-defined group names, e.g. ["progressive", "conservative", "centrist"]
 }
 
 // ── Agent Memory Types (Feature 2: Enhanced Memory) ───────────────────────
@@ -61,6 +66,8 @@ export interface EpisodicEntry {
   event: string;           // "changed from X to Y because..."
   influence: string;       // which agent triggered this
   impact: 'high' | 'low';
+  currentImpact: number;   // decayed impact value (starts at 1.0 for high, 0.3 for low)
+  toState?: string;        // state this memory was moving toward (used for confirmation bias)
   createdAt?: string;      // ISO timestamp (real time, not epoch-based)
   reasoning_trace?: ReasoningTrace;
   confidence?: number;
@@ -168,6 +175,7 @@ export interface DiscussionComment {
 
 export interface DiscussionPost {
   id: string;
+  title?: string;           // Optional post title
   author: string;
   author_type: 'user' | 'agent';
   personality?: string;     // Optional personality name of the post author
@@ -177,6 +185,7 @@ export interface DiscussionPost {
   comments: DiscussionComment[];
   agentId?: string;
   tags?: string[];
+  contentType?: ContentType; // viral mechanics: emotional/logical/authority/social
 }
 
 export interface FeedUpdateMessage {
@@ -304,6 +313,8 @@ export interface ConversationLog {
     newState: string;
     reason: string;
   };
+  participantIds?: string[];        // for group conversations (3+ agents)
+  coalitionEffect?: boolean;        // whether coalition pressure was active
   createdAt: string;                // ISO timestamp
 }
 
@@ -339,12 +350,14 @@ export type ExperimentGroup = 'control' | 'treatment' | 'none';
 export interface AdvancedMetrics {
   polarizationIndex: number;        // 0-1, bimodality of state distribution
   echoChamberScore: number;         // 0-1, fraction of same-state edges
+  tribalEchoChamberScore?: number;  // 0-1, fraction of edges connecting same ideological group
   spreadSpeed: number | null;       // ticks to reach 50% threshold (null if not reached)
   influenceCentrality: Record<string, number>;  // agentId → centrality score 0-1
   groupMetrics?: {
     controlStateCounts: Record<string, number>;
     treatmentStateCounts: Record<string, number>;
   };
+  tribalDistribution?: Record<string, number>; // group → agent count
 }
 
 // ── API Request/Response Types ────────────────────────────────────────────
@@ -362,6 +375,7 @@ export interface LaunchRequest {
   seedText?: string;
   roleMix?: RoleMix;
   modelName?: string;
+  ideologicalGroups?: string[];
 }
 
 export interface GeneratePersonalitiesRequest {
@@ -396,6 +410,7 @@ export interface SeedResponse {
   suggestedConfig: Partial<SimulationConfig>;
   suggestedPersonalities: PersonalityDef[];
   seedRationale: string;
+  ideologicalGroups?: string[];
 }
 
 // ── What-If Types (Feature 4) ─────────────────────────────────────────────
@@ -438,6 +453,7 @@ export interface WorldConfig {
   key_concepts: string[];
   personality_archetypes: PersonalityDef[];
   initial_state_distribution: Record<string, number>;
+  ideologicalGroups: string[];
   suggested_config: {
     theme: string;
     agent_count: number;

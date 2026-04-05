@@ -31,6 +31,7 @@ router.post('/', async (req: Request<{}, {}, LaunchRequest>, res: Response) => {
       aiAgentsPerTick: 20,
       seedText: body.seedText,
       roleMix: body.roleMix,
+      ideologicalGroups: body.ideologicalGroups,
     };
 
     const engine = await createSimulation(config);

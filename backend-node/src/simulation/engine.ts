@@ -109,6 +109,8 @@ export class SimulationEngine {
       this.theme.seedStates(this.agents);
     }
 
+    this.assignIdeologicalGroups();
+
     return this.getInitData();
   }
 
@@ -320,6 +322,9 @@ export class SimulationEngine {
       this.applyInjection(ev);
     }
 
+    // Apply memory decay and confirmation bias to all agents at the start of each tick
+    this.applyMemoryDecayAndBias();
+
     // Passive exposure: agents in the initial state have a small random chance
     // to be passively exposed each tick. This prevents stalling when the seed
     // fraction is too small to overcome the exposure threshold via social pressure alone.
@@ -423,11 +428,14 @@ export class SimulationEngine {
 
         // Retrieve reasoning trace if this was an AI decision
         const geminiResult = (agent as any)._lastGeminiResult as { reasoning_trace?: unknown; confidence?: number } | undefined;
+        const entryImpact = geminiDecisions.has(aid) ? 'high' : 'low';
         addEpisodicMemory(agent, {
           tick: this.tick,
           event: `changed from ${oldState} to ${newState}`,
           influence: 'neighbors',
-          impact: geminiDecisions.has(aid) ? 'high' : 'low',
+          impact: entryImpact,
+          currentImpact: entryImpact === 'high' ? 1.0 : 0.3,
+          toState: newState,
           reasoning_trace: geminiResult?.reasoning_trace as any,
           confidence: geminiResult?.confidence,
         });
@@ -463,6 +471,11 @@ export class SimulationEngine {
     // Every 5 ticks: agents with shared beliefs may form or join groups
     if (this.tick % 5 === 0) {
       void this.performAutoGroupFormation();
+    }
+
+    // Every 7 ticks: simulate multi-agent group conversations
+    if (this.tick % 7 === 0) {
+      void this.performGroupConversations();
     }
 
     if (this.tick % 15 === 0) {
@@ -564,6 +577,10 @@ export class SimulationEngine {
       return [agent.state, `Spreading ${agent.state} to neighbors`];
     }
 
+    const neighbors = this.getNeighbors(agent.agentId);
+    const neighborGroups = neighbors.map(n => this.agents.get(n)?.ideologicalGroup).filter(Boolean) as string[];
+    const memoryInfluence = agent.episodicMemory.reduce((sum, e) => sum + e.currentImpact * 0.05, 0);
+
     const result = await gemini.agentDecision(
       agent.agentId,
       agent.personality.name,
@@ -575,7 +592,10 @@ export class SimulationEngine {
       getTraits(agent),
       agent.episodicMemory,
       agent.emotionalState,
-      this.config.modelName
+      this.config.modelName,
+      agent.ideologicalGroup,
+      neighborGroups,
+      memoryInfluence
     );
 
     // Stash the full result so executeTick can read reasoning_trace + confidence
@@ -624,7 +644,27 @@ export class SimulationEngine {
         return (nTraits.influence ?? 50) > (bestTraits.influence ?? 50) ? n : best;
       }, matchingNeighbors[0]);
 
-      const strength = 0.3 + (matchingNeighbors.length / Math.max(neighbors.length, 1)) * 0.5;
+      let strength = 0.3 + (matchingNeighbors.length / Math.max(neighbors.length, 1)) * 0.5;
+
+      // Apply ideological group trust/distrust modifier
+      const influencer = this.agents.get(influencerId);
+      const changed = this.agents.get(changedAgentId);
+      if (influencer && changed) {
+        if (influencer.ideologicalGroup && influencer.ideologicalGroup === changed.ideologicalGroup) {
+          strength *= 1.3; // same tribe → trust boost
+        } else if (influencer.ideologicalGroup && changed.ideologicalGroup && influencer.ideologicalGroup !== changed.ideologicalGroup) {
+          strength *= 0.7; // opposing tribes → distrust
+        }
+
+        // Content type multiplier based on influencer's recent post
+        const ct = influencer.recentContentType;
+        if (ct === 'emotional') strength *= 1.4;
+        else if (ct === 'logical') strength *= 0.8;
+        else if (ct === 'authority') strength *= 1.0 + (influencer.personality.influence / 200);
+        else if (ct === 'social') strength *= 1.1;
+      }
+
+      strength = Math.min(1, strength);
 
       // Determine relationship type from state transition context
       let relType: RelationshipType = 'INFLUENCES';
@@ -797,13 +837,26 @@ export class SimulationEngine {
     // Echo chamber score: fraction of graph edges that connect same-state agents
     const edges = this.graph.edges();
     let sameStateEdges = 0;
+    let sameGroupEdges = 0;
     for (const edge of edges) {
       const [src, tgt] = this.graph.extremities(edge);
-      const srcState = this.agents.get(src)?.state;
-      const tgtState = this.agents.get(tgt)?.state;
-      if (srcState && tgtState && srcState === tgtState) sameStateEdges++;
+      const srcAgent = this.agents.get(src);
+      const tgtAgent = this.agents.get(tgt);
+      if (srcAgent && tgtAgent) {
+        if (srcAgent.state === tgtAgent.state) sameStateEdges++;
+        if (srcAgent.ideologicalGroup === tgtAgent.ideologicalGroup) sameGroupEdges++;
+      }
     }
     const echoChamberScore = edges.length > 0 ? sameStateEdges / edges.length : 0;
+    const tribalEchoChamberScore = edges.length > 0 ? sameGroupEdges / edges.length : 0;
+
+    // Tribal distribution
+    const tribalDistribution: Record<string, number> = {};
+    for (const agent of this.agents.values()) {
+      if (agent.ideologicalGroup) {
+        tribalDistribution[agent.ideologicalGroup] = (tribalDistribution[agent.ideologicalGroup] ?? 0) + 1;
+      }
+    }
 
     // Influence centrality: proportion of relationships where agent is source (normalised 0-1)
     const relationships = graphDb.getRelationshipsForSim(this.config.simId);
@@ -834,9 +887,11 @@ export class SimulationEngine {
     return {
       polarizationIndex: Math.round(polarizationIndex * 1000) / 1000,
       echoChamberScore: Math.round(echoChamberScore * 1000) / 1000,
+      tribalEchoChamberScore: Math.round(tribalEchoChamberScore * 1000) / 1000,
       spreadSpeed: this.spreadSpeedTick,
       influenceCentrality,
       groupMetrics: hasGroups ? { controlStateCounts, treatmentStateCounts } : undefined,
+      tribalDistribution,
     };
   }
 
@@ -1165,11 +1220,14 @@ export class SimulationEngine {
               this.updateBeliefsForTransition(affectedAgent, fromState, newState);
               this.emit({ type: 'belief_update', agentId, beliefs: affectedAgent.beliefs } as BeliefUpdateMessage);
               addMemory(affectedAgent, `Tick ${this.tick}: conversation with ${agentId === agentA.agentId ? agentB.personality.name : agentA.personality.name} shifted view — ${reason}`);
+              const convImpact = conv.influenceImpact > 0.5 ? 'high' : 'low';
               addEpisodicMemory(affectedAgent, {
                 tick: this.tick,
                 event: `changed from ${fromState} to ${newState} via conversation`,
                 influence: agentId === agentA.agentId ? agentB.agentId : agentA.agentId,
-                impact: conv.influenceImpact > 0.5 ? 'high' : 'low',
+                impact: convImpact,
+                currentImpact: convImpact === 'high' ? 1.0 : 0.3,
+                toState: newState,
               });
             }
           }
@@ -1382,59 +1440,67 @@ export class SimulationEngine {
       const feedSnapshot = await readFeed(this.config.simId);
       const posts = feedSnapshot.posts;
 
-       if (posts.length === 0) {
-         const traits = {
-           credulity: agent.personality.credulity,
-           influence: agent.personality.influence,
-           stubbornness: agent.personality.stubbornness,
-           activity: agent.personality.activity,
-         };
-         const postData = await gemini.generateDiscussionPost(
-           agent.personality.name,
-           agent.state,
-           agent.beliefs,
-           agent.memory,
-           this.theme.THEME_NAME,
-           this.config.modelName,
-           agent.role,
-           traits
-         );
-        
-        await this.createFeedPost(
+      if (posts.length === 0) {
+        const traits = {
+          credulity: agent.personality.credulity,
+          influence: agent.personality.influence,
+          stubbornness: agent.personality.stubbornness,
+          activity: agent.personality.activity,
+        };
+        const postData = await gemini.generateDiscussionPost(
+          agent.personality.name,
+          agent.state,
+          agent.beliefs,
+          agent.memory,
+          this.theme.THEME_NAME,
+          this.config.modelName,
+          agent.role,
+          traits
+        );
+
+        agent.recentContentType = postData.contentType;
+        this.applyContentTypeEffect(agent, postData.contentType);
+
+        const post = await this.createFeedPost(
           agent.agentId,
           postData.title,
           postData.content,
           postData.tags
         );
+        (post as DiscussionPost).contentType = postData.contentType;
         return;
       }
 
       const rand = Math.random();
-      
-       if (rand < 0.35) {
-         const traits = {
-           credulity: agent.personality.credulity,
-           influence: agent.personality.influence,
-           stubbornness: agent.personality.stubbornness,
-           activity: agent.personality.activity,
-         };
-         const postData = await gemini.generateDiscussionPost(
-           agent.personality.name,
-           agent.state,
-           agent.beliefs,
-           agent.memory,
-           this.theme.THEME_NAME,
-           this.config.modelName,
-           agent.role,
-           traits
-         );
-        
-        await this.createFeedPost(
+
+      if (rand < 0.35) {
+        const traits = {
+          credulity: agent.personality.credulity,
+          influence: agent.personality.influence,
+          stubbornness: agent.personality.stubbornness,
+          activity: agent.personality.activity,
+        };
+        const postData = await gemini.generateDiscussionPost(
+          agent.personality.name,
+          agent.state,
+          agent.beliefs,
+          agent.memory,
+          this.theme.THEME_NAME,
+          this.config.modelName,
+          agent.role,
+          traits
+        );
+
+        agent.recentContentType = postData.contentType;
+        this.applyContentTypeEffect(agent, postData.contentType);
+
+        const post = await this.createFeedPost(
           agent.agentId,
           postData.title,
           postData.content,
           postData.tags
         );
+        (post as DiscussionPost).contentType = postData.contentType;
       } else if (rand < 0.50) {
         const targetPost = posts[Math.floor(Math.random() * posts.length)];
         await this.addFeedLike(targetPost.id, agent.agentId);
@@ -1450,7 +1516,7 @@ export class SimulationEngine {
            agent.personality.name,
            agent.state,
            agent.beliefs,
-           targetPost.title,
+           targetPost.title ?? '',
            targetPost.content,
            targetPost.author,
            this.theme.THEME_NAME,
@@ -1476,6 +1542,203 @@ export class SimulationEngine {
         return;
       }
       console.error('[Engine] Auto agent action failed:', error);
+    }
+  }
+
+  /**
+   * Assign LLM-defined ideological groups to all agents.
+   * Groups come from SimulationConfig.ideologicalGroups (e.g. ["progressive", "conservative", "centrist"]).
+   * High stubbornness biases toward the first group, high credulity toward the last;
+   * otherwise distribution is approximately uniform.
+   */
+  private assignIdeologicalGroups(): void {
+    const groups = this.config.ideologicalGroups?.length
+      ? this.config.ideologicalGroups
+      : ['group_a', 'group_b', 'group_c'];
+    const n = groups.length;
+    for (const agent of this.agents.values()) {
+      const { stubbornness, credulity } = agent.personality;
+      // Build equal base weights then bias first group toward stubbornness, last toward credulity
+      const weights = groups.map((_, i) => {
+        let w = 100 / n;
+        if (i === 0) w += (stubbornness - 50) * 0.2;
+        if (i === n - 1) w += (credulity - 50) * 0.2;
+        return Math.max(5, w);
+      });
+      const total = weights.reduce((s, w) => s + w, 0);
+      let r = Math.random() * total;
+      let chosen = groups[n - 1];
+      for (let i = 0; i < n; i++) {
+        r -= weights[i];
+        if (r <= 0) { chosen = groups[i]; break; }
+      }
+      agent.ideologicalGroup = chosen;
+    }
+  }
+
+  /**
+   * Apply exponential memory decay and confirmation bias to every agent.
+   * Decay rate = 20 ticks half-life equivalent.
+   * Bias: memories that point toward agent's current state are reinforced (+20%),
+   *       others are weakened (-20%).
+   */
+  private applyMemoryDecayAndBias(): void {
+    const DECAY_RATE = 20;
+    for (const agent of this.agents.values()) {
+      for (const entry of agent.episodicMemory) {
+        const age = this.tick - entry.tick;
+        // Exponential decay
+        entry.currentImpact = entry.impact === 'high'
+          ? Math.exp(-age / DECAY_RATE)
+          : 0.3 * Math.exp(-age / DECAY_RATE);
+        // Confirmation bias: memories aligned with current state are reinforced
+        if (entry.toState === agent.state) {
+          entry.currentImpact *= 1.2;
+        } else if (entry.toState && entry.toState !== agent.state) {
+          entry.currentImpact *= 0.8;
+        }
+        entry.currentImpact = Math.max(0, entry.currentImpact);
+      }
+      // Prune entries with negligible impact (< 0.01) to keep memory clean
+      agent.episodicMemory = agent.episodicMemory.filter(e => e.currentImpact >= 0.01);
+    }
+  }
+
+  /**
+   * Apply content type effects to the posting agent's emotional state.
+   * emotional → emotional spike; logical → stabilize; authority/social → minor boost.
+   */
+  private applyContentTypeEffect(agent: Agent, contentType: 'emotional' | 'logical' | 'authority' | 'social'): void {
+    switch (contentType) {
+      case 'emotional':
+        // Emotional posts amplify the agent's existing emotional state
+        agent.emotionalState = Math.max(-1, Math.min(1, agent.emotionalState + 0.15));
+        break;
+      case 'logical':
+        // Logical posts pull emotional state toward neutral
+        agent.emotionalState = agent.emotionalState * 0.85;
+        break;
+      case 'authority':
+        // Authority posts slightly boost confidence
+        agent.emotionalState = Math.max(-1, Math.min(1, agent.emotionalState + 0.05));
+        break;
+      case 'social':
+        // Social posts have no direct emotional change but are tracked for engagement
+        break;
+    }
+  }
+
+  /**
+   * Every 7 ticks: pick a cluster of 3–4 agents and simulate a group conversation.
+   * Coalition effect is applied when 2+ agents share the same belief state.
+   */
+  private async performGroupConversations(): Promise<void> {
+    try {
+      const agentList = Array.from(this.agents.values());
+      if (agentList.length < 3) return;
+
+      // Pick a random cluster of 3–4 agents (prefer connected neighbors when possible)
+      const seed = agentList[Math.floor(Math.random() * agentList.length)];
+      const neighbors = this.getNeighbors(seed.agentId).slice(0, 3).map(id => this.agents.get(id)!).filter(Boolean);
+      const cluster = [seed, ...neighbors].slice(0, 4);
+      if (cluster.length < 3) {
+        // Fallback: just pick random agents
+        const shuffled = agentList.sort(() => Math.random() - 0.5).slice(0, 3);
+        cluster.length = 0;
+        cluster.push(...shuffled);
+      }
+
+      // Detect coalition effect: 2+ agents with same state
+      const stateCounts: Record<string, number> = {};
+      for (const a of cluster) stateCounts[a.state] = (stateCounts[a.state] || 0) + 1;
+      const coalitionEffect = Math.max(...Object.values(stateCounts)) >= 2;
+
+      const participants = cluster.map(a => ({
+        agentId: a.agentId,
+        agentName: a.personality.name,
+        agentState: a.state,
+        agentDesc: a.personality.description,
+        agentGroup: a.ideologicalGroup,
+        traits: {
+          credulity: a.personality.credulity,
+          influence: a.personality.influence,
+          stubbornness: a.personality.stubbornness,
+        },
+      }));
+
+      const result = await gemini.simulateGroupConversation(
+        participants,
+        this.theme.THEME_NAME,
+        this.theme.VALID_STATES,
+        coalitionEffect,
+        this.config.modelName
+      );
+      this.trackApiCall(0, 'group_conversation');
+
+      // Store as ConversationLog (reusing existing type with participantIds)
+      const convLog: ConversationLog = {
+        id: uuidv4(),
+        simId: this.config.simId,
+        tick: this.tick,
+        agentAId: cluster[0].agentId,
+        agentBId: cluster[1]?.agentId ?? cluster[0].agentId,
+        agentAName: cluster[0].personality.name,
+        agentBName: cluster[1]?.personality.name ?? cluster[0].personality.name,
+        messages: result.messages,
+        influenceImpact: coalitionEffect ? Math.min(1, result.influenceImpact * 1.5) : result.influenceImpact,
+        derivedRelationshipType: 'RELATES_TO',
+        participantIds: cluster.map(a => a.agentId),
+        coalitionEffect,
+        createdAt: new Date().toISOString(),
+      };
+      await appendConversation(this.config.simId, convLog);
+      this.emit({ type: 'conversation_update', conversation: convLog } as ConversationUpdateMessage);
+
+      // Apply belief shifts from the group conversation
+      for (const shift of result.beliefShifts) {
+        const agent = this.agents.get(shift.agentId);
+        if (!agent || agent.state !== shift.fromState) continue;
+        if (!this.theme.VALID_STATES.includes(shift.newState)) continue;
+
+        agent.state = shift.newState;
+        this.updateBeliefsForTransition(agent, shift.fromState, shift.newState);
+        this.emit({ type: 'belief_update', agentId: agent.agentId, beliefs: agent.beliefs } as BeliefUpdateMessage);
+        addMemory(agent, `Tick ${this.tick}: group discussion shifted view — ${shift.reason}`);
+
+        const shiftImpact = result.influenceImpact > 0.5 ? 'high' : 'low';
+        addEpisodicMemory(agent, {
+          tick: this.tick,
+          event: `changed from ${shift.fromState} to ${shift.newState} via group discussion`,
+          influence: 'group',
+          impact: shiftImpact,
+          currentImpact: shiftImpact === 'high' ? 1.0 : 0.3,
+          toState: shift.newState,
+        });
+      }
+
+      // Persist messages as DMs so the existing UI can show them
+      for (const msg of result.messages) {
+        const sender = this.agents.get(msg.agentId);
+        if (!sender) continue;
+        const receiver = cluster.find(a => a.agentId !== msg.agentId);
+        if (!receiver) continue;
+        const dm: DirectMessage = {
+          id: uuidv4(),
+          simId: this.config.simId,
+          fromAgentId: msg.agentId,
+          toAgentId: receiver.agentId,
+          fromAuthor: msg.agentName,
+          toAuthor: receiver.personality.name,
+          content: `[Group] ${msg.content}`,
+          createdAt: new Date().toISOString(),
+        };
+        await appendDM(this.config.simId, dm);
+        this.emitDMUpdate(dm);
+      }
+    } catch (err) {
+      const errMsg = String(err);
+      if (errMsg.includes('QUOTA_EXCEEDED') || errMsg.includes('API_QUOTA_EXCEEDED')) return;
+      console.error('[Engine] performGroupConversations error:', err);
     }
   }
 }

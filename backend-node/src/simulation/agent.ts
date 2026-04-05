@@ -1,4 +1,4 @@
-import type { PersonalityDef, AgentRole, EpisodicEntry, Belief, AgentAction, ExperimentGroup } from '../types.js';
+import type { PersonalityDef, AgentRole, EpisodicEntry, Belief, AgentAction, ExperimentGroup, ContentType } from '../types.js';
 
 export interface AgentPersonality {
   name: string;
@@ -15,6 +15,7 @@ export interface Agent {
   personality: AgentPersonality;
   state: string;
   role: AgentRole;
+  ideologicalGroup: string;  // LLM-defined tribal identity (e.g. "progressive", "conservative", "centrist")
   memory: string[];
   memorySummary: string;
   ticksSinceCompression: number;
@@ -27,6 +28,7 @@ export interface Agent {
   beliefs: Belief[];
   actionLog: AgentAction[];
   experimentGroup: ExperimentGroup;
+  recentContentType?: ContentType;  // content type of the agent's most recent post
 }
 
 const MEMORY_MAX_LENGTH = 40;
@@ -50,6 +52,7 @@ export function createAgent(
     },
     state: initialState,
     role,
+    ideologicalGroup: '',  // assigned after construction in engine.build()
     memory: [],
     memorySummary: '',
     ticksSinceCompression: 0,

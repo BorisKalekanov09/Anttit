@@ -80,6 +80,7 @@ router.post('/generate', async (req, res) => {
       key_concepts: worldConfig.key_concepts,
       personality_archetypes: personalities,
       initial_state_distribution: distribution,
+      ideologicalGroups: worldConfig.ideologicalGroups ?? ['group_a', 'group_b', 'group_c'],
       suggested_config: {
         theme: worldConfig.suggested_theme,
         agent_count: Math.min(300, Math.max(50, worldConfig.agent_count || 80)),

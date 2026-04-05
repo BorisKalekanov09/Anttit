@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from 'dotenv';
-import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry, ReasoningTrace, RelationshipType, ConversationMessage } from '../types.js';
+import type { PersonalityDef, AnalysisReport, TickMessage, GeminiDecision, EpisodicEntry, ReasoningTrace, RelationshipType, ConversationMessage, ContentType } from '../types.js';
 import { createProvider } from '../lib/providers/factory.js';
 import type { ProviderType } from '../lib/model-registry.js';
 import { configManager } from '../lib/config-manager.js';
@@ -138,18 +138,35 @@ export async function agentDecision(
   traits: Record<string, number>,
   episodicMemory: EpisodicEntry[],
   emotionalState: number,
-  modelName: string
+  modelName: string,
+  ideologicalGroup?: string,
+  neighborGroups?: string[],
+  memoryInfluence?: number
 ): Promise<GeminiDecision> {
   const model = genAI.getGenerativeModel({ model: modelName });
   const neighborSummary = neighborStates.slice(0, 10).join(', ') || 'none';
   const highImpactMemories = episodicMemory
     .filter(e => e.impact === 'high')
     .slice(-5)
-    .map(e => `Tick ${e.tick}: ${e.event} (triggered by ${e.influence})`)
+    .map(e => `Tick ${e.tick}: ${e.event} [weight: ${e.currentImpact.toFixed(2)}] (triggered by ${e.influence})`)
     .join('; ') || 'none';
-  const emotionalDesc = emotionalState < -0.3 ? 'fearful/anxious' : 
+  const emotionalDesc = emotionalState < -0.3 ? 'fearful/anxious' :
                         emotionalState > 0.3 ? 'confident/optimistic' : 'neutral';
-  
+
+  const groupLines: string[] = [];
+  if (ideologicalGroup) {
+    groupLines.push(`Your ideological tribe: ${ideologicalGroup}`);
+  }
+  if (neighborGroups && neighborGroups.length > 0) {
+    const sameGroup = neighborGroups.filter(g => g === ideologicalGroup).length;
+    const diff = neighborGroups.length - sameGroup;
+    groupLines.push(`Neighbors: ${sameGroup} from your tribe, ${diff} from other tribes — you tend to trust your tribe more.`);
+  }
+  if (memoryInfluence !== undefined && memoryInfluence !== 0) {
+    groupLines.push(`Accumulated memory pressure: ${memoryInfluence > 0 ? '+' : ''}${memoryInfluence.toFixed(3)} (positive = memories push toward change)`);
+  }
+  const groupContext = groupLines.length > 0 ? '\n' + groupLines.join('\n') : '';
+
   const prompt = `You are agent ${agentId} in a '${theme}' simulation.
 Personality: ${personalityName} — ${personalityDesc}
 Traits: credulity=${traits.credulity ?? 50}, stubbornness=${traits.stubbornness ?? 50}
@@ -157,7 +174,7 @@ Current state: ${currentState}
 Neighbors' states: ${neighborSummary}
 Memory: ${memorySummary || 'No notable history yet.'}
 Key experiences: ${highImpactMemories}
-Emotional state: ${emotionalDesc} (${emotionalState.toFixed(2)})
+Emotional state: ${emotionalDesc} (${emotionalState.toFixed(2)})${groupContext}
 
 Decide your action this tick. Reply with ONLY a JSON object:
 {
@@ -329,9 +346,10 @@ export async function generateSeedConfig(
   initial_state_distribution: Record<string, number>;
   personality_mix: Record<string, number>;
   seed_fraction: number;
+  ideologicalGroups: string[];
 }> {
   const personalityNames = availablePersonalities.map(p => p.name);
-  
+
   const prompt = `You are translating a real-world scenario description into simulation parameters.
 
 Scenario: "${text}"
@@ -343,7 +361,8 @@ Based on this real-world scenario, suggest simulation parameters. Return a JSON 
   "agent_count": <number between 50-500 based on scenario scale>,
   "initial_state_distribution": {"state_name": <percentage>, ...},
   "personality_mix": {"PersonalityName": <percentage>, ...},
-  "seed_fraction": <0.01-0.3 indicating how concentrated the initial "outbreak" is>
+  "seed_fraction": <0.01-0.3 indicating how concentrated the initial "outbreak" is>,
+  "ideologicalGroups": ["<group1>", "<group2>", "<group3>"] (2-4 short labels capturing the ideological tribes relevant to this scenario, e.g. ["progressive", "conservative", "centrist"] for politics or ["alarmist", "denialist", "pragmatist"] for climate)
 }
 
 Return ONLY valid JSON, no markdown.`;
@@ -456,7 +475,7 @@ export async function generateDiscussionPost(
   modelName?: string,
   role: string = 'default',
   traits: { credulity?: number; influence?: number; stubbornness?: number; activity?: number } = {}
-): Promise<{ title: string; content: string; tags: string[] }> {
+): Promise<{ title: string; content: string; tags: string[]; contentType: ContentType }> {
   const { provider: providerType, modelId } = parseModelName(modelName);
   
   const topBeliefs = agentBeliefs
@@ -498,8 +517,15 @@ Return ONLY this exact JSON (no markdown, no extra text):
 {
   "title": "<compelling title, 5-12 words, specific not generic>",
   "content": "<2-3 sentences, authentic and contextual>",
-  "tags": ["${agentState.toLowerCase()}", "<belief topic>", "<theme-relevant>"]
-}`;
+  "tags": ["${agentState.toLowerCase()}", "<belief topic>", "<theme-relevant>"],
+  "contentType": "<emotional|logical|authority|social>"
+}
+
+contentType guide:
+- emotional: stirs feelings, fear, hope, anger, excitement — spreads fast, less accurate
+- logical: evidence-based, analytical, measured — spreads slower, more stable
+- authority: appeals to expertise, credentials, or established consensus
+- social: community-focused, solidarity, group identity, belonging`;
 
   try {
     // Get API key for the provider
@@ -512,10 +538,17 @@ Return ONLY this exact JSON (no markdown, no extra text):
     const response = await provider.generateCompletion(prompt, modelId);
     const parsed = JSON.parse(response.content);
     
+    const validContentTypes: ContentType[] = ['emotional', 'logical', 'authority', 'social'];
+    const rawContentType = parsed.contentType as string;
+    const contentType: ContentType = validContentTypes.includes(rawContentType as ContentType)
+      ? (rawContentType as ContentType)
+      : 'social';
+
     return {
       title: parsed.title || `${agentName} shares thoughts on ${agentState}`,
       content: parsed.content || `I've been reflecting on ${agentState.toLowerCase()} and its impact on all of us.`,
       tags: Array.isArray(parsed.tags) ? parsed.tags : [agentState.toLowerCase()],
+      contentType,
     };
   } catch (error) {
     const errorMsg = String(error);
@@ -639,6 +672,105 @@ Only include stateChange if the conversation genuinely warrants it. Omit the fie
       ],
       influenceImpact: 0.1,
       derivedRelationshipType: agentAState === agentBState ? 'SUPPORTS' : 'RELATES_TO',
+    };
+  }
+}
+
+/**
+ * Simulates a multi-agent group conversation (3–5 participants).
+ * Applies coalition pressure when multiple agents share the same belief.
+ */
+export async function simulateGroupConversation(
+  participants: Array<{
+    agentId: string;
+    agentName: string;
+    agentState: string;
+    agentDesc: string;
+    agentGroup: string;
+    traits: { credulity?: number; influence?: number; stubbornness?: number };
+  }>,
+  theme: string,
+  validStates: string[],
+  coalitionEffect: boolean,
+  modelName?: string
+): Promise<{
+  messages: ConversationMessage[];
+  beliefShifts: Array<{ agentId: string; fromState: string; newState: string; reason: string }>;
+  influenceImpact: number;
+}> {
+  const { provider: providerType, modelId } = parseModelName(modelName);
+  const statesStr = validStates.join(', ');
+  const participantList = participants
+    .map(p => `- ${p.agentName} (state: ${p.agentState}, tribe: ${p.agentGroup}, credulity: ${p.traits.credulity ?? 50}/100, stubbornness: ${p.traits.stubbornness ?? 50}/100)`)
+    .join('\n');
+
+  const coalitionNote = coalitionEffect
+    ? '\nIMPORTANT: Multiple agents share the same state — coalition pressure is active. The minority may feel social pressure to conform or dig in harder.'
+    : '';
+
+  const prompt = `You are simulating a GROUP discussion between ${participants.length} agents in a "${theme}" simulation.
+
+Participants:
+${participantList}
+
+They respond in 5–8 turns total, taking turns naturally. Agents from the same tribe trust each other more. Show:
+- Real disagreement and pushback
+- Coalition pressure from agents who agree with each other
+- At least one agent being genuinely influenced
+${coalitionNote}
+
+Valid states: ${statesStr}
+
+Return ONLY this JSON (no markdown):
+{
+  "messages": [
+    {"agentId": "<id>", "agentName": "<name>", "content": "<what they say>", "turn": 1},
+    ...
+  ],
+  "beliefShifts": [
+    {"agentId": "<id>", "fromState": "<current>", "newState": "<valid state>", "reason": "<one sentence>"}
+  ],
+  "influenceImpact": <0.0-1.0>
+}
+
+Only include beliefShifts if genuinely warranted. Can be empty array.`;
+
+  try {
+    const apiKey = process.env[`${providerType.toUpperCase()}_API_KEY`] || configManager.getDecryptedKey(providerType);
+    if (!apiKey) throw new Error(`No API key for ${providerType}`);
+
+    const provider = createProvider(providerType, { apiKey });
+    const response = await provider.generateCompletion(prompt, modelId);
+    const parsed = JSON.parse(stripMarkdownFences(response.content));
+
+    return {
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      beliefShifts: Array.isArray(parsed.beliefShifts)
+        ? parsed.beliefShifts.filter((s: any) => validStates.includes(s.newState))
+        : [],
+      influenceImpact: typeof parsed.influenceImpact === 'number'
+        ? Math.min(1, Math.max(0, parsed.influenceImpact))
+        : 0.3,
+    };
+  } catch (error) {
+    const errorMsg = String(error);
+    const isQuotaError = errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('rate limit');
+    console.error(`[${providerType}] simulateGroupConversation failed:`, errorMsg);
+    if (isQuotaError) {
+      const err = new Error('API_QUOTA_EXCEEDED');
+      (err as any).isQuotaError = true;
+      throw err;
+    }
+    // Fallback: minimal exchange
+    return {
+      messages: participants.slice(0, 2).map((p, i) => ({
+        agentId: p.agentId,
+        agentName: p.agentName,
+        content: `From my ${p.agentState} perspective, I think we need to discuss this more.`,
+        turn: i + 1,
+      })),
+      beliefShifts: [],
+      influenceImpact: 0.1,
     };
   }
 }

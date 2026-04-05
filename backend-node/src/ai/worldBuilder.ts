@@ -48,6 +48,7 @@ export interface WorldConfigRaw {
   duration: number;
   key_concepts: string[];
   suggested_theme: string;
+  ideologicalGroups: string[];
 }
 
 export async function generateWorldConfig(
@@ -66,6 +67,7 @@ Generate a JSON response with:
 - duration (number): 60-240 minutes
 - key_concepts (string[]): list of 3-5 central concepts or debate points
 - suggested_theme (string): one of "epidemic", "misinformation", "politics", or "cultural" — pick the most fitting
+- ideologicalGroups (string[]): 2–4 short labels for the ideological tribes in this world (e.g. ["progressive", "conservative", "centrist"] for politics, ["alarmist", "denialist", "pragmatist"] for climate, ["trusting", "skeptical", "misinformed"] for health)
 
 Theme meanings:
 - epidemic: biological/social contagion, health behaviors, panic spreading
