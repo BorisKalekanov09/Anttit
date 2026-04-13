@@ -29,16 +29,7 @@ export default function AnalysisPage() {
       return
     }
 
-    const key = `sim-analysis-${simId}`
-    const stored = sessionStorage.getItem(key)
-
-    if (!stored) {
-      navigate('/')
-      return
-    }
-
-    try {
-      const data = JSON.parse(stored)
+    const applyData = (data: any) => {
       setReport(data.report || null)
       setStats(data.stats || null)
       setHistory(data.history || [])
@@ -46,10 +37,27 @@ export default function AnalysisPage() {
       setStateColors(data.stateColors || {})
       setAdvancedMetrics(data.advancedMetrics || null)
       setLoading(false)
-    } catch (err) {
-      console.error('Failed to parse analysis:', err)
-      navigate('/')
     }
+
+    // Try backend first (survives page refresh), then fall back to sessionStorage
+    fetch(`/api/simulations/${simId}/analysis`)
+      .then(res => {
+        if (!res.ok) throw new Error('not found')
+        return res.json()
+      })
+      .then(applyData)
+      .catch(() => {
+        const stored = sessionStorage.getItem(`sim-analysis-${simId}`)
+        if (!stored) {
+          navigate('/')
+          return
+        }
+        try {
+          applyData(JSON.parse(stored))
+        } catch {
+          navigate('/')
+        }
+      })
   }, [simId, navigate])
 
   if (loading || !report || !stats) {
@@ -227,7 +235,7 @@ export default function AnalysisPage() {
         )}
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 12, paddingBottom: 32, justifyContent: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, paddingBottom: 32, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={() => {
               const json = JSON.stringify({ report, stats, advancedMetrics }, null, 2)
@@ -246,6 +254,32 @@ export default function AnalysisPage() {
           </button>
           <button
             onClick={() => {
+              if (history.length === 0) return
+              const headers = ['tick', ...states]
+              const rows = history.map(h => [h.tick, ...states.map(s => h.state_counts[s] ?? 0)])
+              const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
+              const blob = new Blob([csv], { type: 'text/csv' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `analysis-${simId}.csv`
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+            className="btn-secondary"
+            style={{ padding: '12px 28px' }}
+          >
+            📊 Export CSV
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="btn-secondary"
+            style={{ padding: '12px 28px' }}
+          >
+            🖨 Print / PDF
+          </button>
+          <button
+            onClick={() => {
               const text = `Analysis Report: ${report.summary}\n\n${report.timeline}`
               navigator.clipboard.writeText(text)
             }}
@@ -253,6 +287,13 @@ export default function AnalysisPage() {
             style={{ padding: '12px 28px' }}
           >
             📋 Copy Report
+          </button>
+          <button
+            onClick={() => navigate(`/compare?a=${simId}`)}
+            className="btn-secondary"
+            style={{ padding: '12px 28px' }}
+          >
+            ⚖ Compare Runs
           </button>
           <button
             onClick={() => navigate('/')}

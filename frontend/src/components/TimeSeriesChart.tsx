@@ -79,15 +79,24 @@ export default function TimeSeriesChart({ history, stateColors, states }: Props)
     return () => { chartRef.current?.destroy(); chartRef.current = null }
   }, [states, stateColors])
 
-  // Stream data
+  // Stream data — keep up to 2000 ticks, downsample to 500 display points for performance
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || history.length === 0) return
-    const MAX_POINTS = 300
 
-    chart.data.labels = history.slice(-MAX_POINTS).map(h => `T${h.tick}`)
+    const MAX_HISTORY = 2000
+    const MAX_DISPLAY = 500
+    const capped = history.slice(-MAX_HISTORY)
+
+    let display = capped
+    if (capped.length > MAX_DISPLAY) {
+      const step = Math.ceil(capped.length / MAX_DISPLAY)
+      display = capped.filter((_, i) => i % step === 0)
+    }
+
+    chart.data.labels = display.map(h => `T${h.tick}`)
     states.forEach((state, i) => {
-      chart.data.datasets[i].data = history.slice(-MAX_POINTS).map(h => h.state_counts[state] ?? 0)
+      chart.data.datasets[i].data = display.map(h => h.state_counts[state] ?? 0)
     })
     chart.update('none')
   }, [history, states])

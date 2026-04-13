@@ -1,12 +1,29 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 import type { LaunchRequest, ControlRequest, InjectEventRequest, SimulationConfig } from '../types.js';
 import { createSimulation, getSimulation, listSimulations, removeSimulation } from '../simulation/registry.js';
+
+const LaunchSchema = z.object({
+  agent_count: z.number().int().min(1).max(500),
+  tick_rate: z.number().min(0.05).max(5.0),
+  personalities: z.array(z.object({
+    suggested_percentage: z.number(),
+  })).refine(
+    arr => Math.abs(arr.reduce((s, p) => s + p.suggested_percentage, 0) - 100) <= 1,
+    { message: 'Personality percentages must sum to 100' }
+  ),
+}).passthrough();
 
 const router = Router();
 
 router.post('/', async (req: Request<{}, {}, LaunchRequest>, res: Response) => {
   try {
+    const parsed = LaunchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map(i => i.message).join('; ') });
+      return;
+    }
     const body = req.body;
     const simId = uuidv4().slice(0, 8);
 

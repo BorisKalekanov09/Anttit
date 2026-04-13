@@ -1,5 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { DiscussionPost } from '../types/simulation'
+
+const PAGE_SIZE = 50
 
 interface Personality {
   name: string
@@ -19,13 +21,23 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
   const [commentText, setCommentText] = useState('')
   const [commentAuthor, setCommentAuthor] = useState('')
   const [tagFilter, setTagFilter] = useState<'all' | 'news' | 'discussion'>('all')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const listRef = useRef<HTMLDivElement>(null)
 
+  // Reset visible count when posts list changes significantly (new simulation, filter change)
   useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = 0
+    setVisibleCount(PAGE_SIZE)
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [posts.length === 0])
+
+  // Auto-load more when user scrolls near the bottom
+  const handleScroll = useCallback(() => {
+    const el = listRef.current
+    if (!el) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      setVisibleCount(v => v + PAGE_SIZE)
     }
-  }, [posts.length])
+  }, [])
 
   const getPersonalityColor = (personalityName?: string): string => {
     if (!personalityName) return 'var(--text-secondary)'
@@ -47,6 +59,8 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
   }
 
   const filteredPosts = posts.filter(shouldShowPost)
+  const visiblePosts = filteredPosts.slice(0, visibleCount)
+  const hasMore = visibleCount < filteredPosts.length
 
   const formatTime = (isoString: string): string => {
     try {
@@ -175,6 +189,7 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
 
       <div
         ref={listRef}
+        onScroll={handleScroll}
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -198,7 +213,7 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
             No posts match this filter
           </div>
         ) : (
-          filteredPosts.map(post => {
+          visiblePosts.map(post => {
             const personalityColor = getPersonalityColor(post.personality)
             const lastTwoComments = post.comments.slice(-2)
 
@@ -473,6 +488,24 @@ export default function DiscussionFeed({ posts, personalities, onLike, onComment
               </div>
             )
           })
+        )}
+
+        {hasMore && (
+          <button
+            onClick={() => setVisibleCount(v => v + PAGE_SIZE)}
+            style={{
+              flexShrink: 0,
+              padding: '8px',
+              fontSize: 11,
+              background: 'transparent',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            Show {Math.min(PAGE_SIZE, filteredPosts.length - visibleCount)} more of {filteredPosts.length - visibleCount} remaining
+          </button>
         )}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { SimConfig, PersonalityDef } from '../types/simulation'
 
 const TOPOLOGIES = ['small_world', 'scale_free', 'random', 'cluster'] as const
@@ -16,6 +16,15 @@ export default function GeneratedConfigApproval({
 }: GeneratedConfigApprovalProps) {
   const [editingField, setEditingField] = useState<string | null>(null)
   const [tempConfig, setTempConfig] = useState<SimConfig>(config)
+  const [costEstimate, setCostEstimate] = useState<{ estimatedUsd: number | null; modelName: string; note?: string } | null>(null)
+
+  useEffect(() => {
+    const modelId = tempConfig.modelName ?? 'gemini-2.5-flash-lite'
+    fetch(`/api/config/estimate-cost?modelId=${encodeURIComponent(modelId)}&agent_count=${tempConfig.agent_count}&tick_count=100`)
+      .then(r => r.json())
+      .then(setCostEstimate)
+      .catch(() => {})
+  }, [tempConfig.modelName, tempConfig.agent_count])
 
   const handleEditTheme = (theme: string) => {
     setTempConfig(c => ({ ...c, theme }))
@@ -243,6 +252,31 @@ export default function GeneratedConfigApproval({
         )}
       </div>
 
+      {/* Cost estimate */}
+      {costEstimate && (
+        <div style={{
+          marginBottom: 20, padding: '10px 16px', borderRadius: 8,
+          background: costEstimate.estimatedUsd !== null && costEstimate.estimatedUsd > 0.5
+            ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.08)',
+          border: `1px solid ${costEstimate.estimatedUsd !== null && costEstimate.estimatedUsd > 0.5 ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.2)'}`,
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 16 }}>
+            {costEstimate.estimatedUsd !== null && costEstimate.estimatedUsd > 0.5 ? '⚠️' : '💰'}
+          </span>
+          <div>
+            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+              {costEstimate.estimatedUsd !== null
+                ? `~$${costEstimate.estimatedUsd.toFixed(4)} est.`
+                : costEstimate.note ?? 'Free tier'}
+            </span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+              for 100 ticks · {costEstimate.modelName}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div style={{ display: 'flex', gap: 12 }}>
         <button
@@ -432,6 +466,161 @@ function TopologyEditor({
   )
 }
 
+const TRAIT_INPUT_STYLE: React.CSSProperties = {
+  width: '56px',
+  padding: '4px 6px',
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  color: 'var(--text-primary)',
+  fontSize: 12,
+  textAlign: 'center',
+}
+
+const VIBRANT_COLORS = [
+  '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4',
+  '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e',
+]
+
+function PersonalityRow({
+  personality,
+  index,
+  onUpdate,
+  onRemove,
+  canRemove,
+}: {
+  personality: PersonalityDef
+  index: number
+  onUpdate: (updates: Partial<PersonalityDef>) => void
+  onRemove: () => void
+  canRemove: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div style={{
+      background: 'var(--bg-surface)',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      overflow: 'hidden',
+    }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+        <input
+          type="color"
+          value={personality.color}
+          onChange={e => onUpdate({ color: e.target.value })}
+          style={{ width: 24, height: 24, border: 'none', borderRadius: '50%', cursor: 'pointer', padding: 0, background: 'none' }}
+          title="Pick color"
+        />
+        <input
+          value={personality.name}
+          onChange={e => onUpdate({ name: e.target.value })}
+          placeholder="Name"
+          style={{
+            flex: 1,
+            background: 'transparent',
+            border: 'none',
+            borderBottom: '1px solid var(--border)',
+            color: 'var(--text-primary)',
+            fontSize: 13,
+            fontWeight: 700,
+            padding: '2px 0',
+            outline: 'none',
+          }}
+        />
+        <input
+          type="number"
+          value={personality.suggested_percentage}
+          onChange={e => onUpdate({ suggested_percentage: parseInt(e.target.value) || 0 })}
+          min={0}
+          max={100}
+          style={{ ...TRAIT_INPUT_STYLE, width: '48px' }}
+        />
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>%</span>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', fontSize: 16, padding: '2px 4px',
+          }}
+          title={expanded ? 'Collapse' : 'Edit details'}
+        >
+          {expanded ? '▲' : '▼'}
+        </button>
+        {canRemove && (
+          <button
+            onClick={onRemove}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: '#ef4444', fontSize: 15, padding: '2px 4px',
+            }}
+            title="Remove"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Expanded detail editor */}
+      {expanded && (
+        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
+          <textarea
+            value={personality.description}
+            onChange={e => onUpdate({ description: e.target.value })}
+            placeholder="Description..."
+            rows={2}
+            style={{
+              width: '100%',
+              marginTop: 10,
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              color: 'var(--text-secondary)',
+              fontSize: 12,
+              padding: '6px 8px',
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
+            {(['credulity', 'influence', 'stubbornness', 'activity'] as const).map(trait => (
+              <label key={trait} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+                {trait.charAt(0).toUpperCase() + trait.slice(1)}
+                <input
+                  type="number"
+                  value={personality[trait]}
+                  onChange={e => onUpdate({ [trait]: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })}
+                  min={0}
+                  max={100}
+                  style={TRAIT_INPUT_STYLE}
+                />
+              </label>
+            ))}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Quick colors</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {VIBRANT_COLORS.map(c => (
+                <div
+                  key={c}
+                  onClick={() => onUpdate({ color: c })}
+                  style={{
+                    width: 20, height: 20, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: personality.color === c ? '2px solid white' : '2px solid transparent',
+                    transition: 'transform 0.1s',
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PersonalitiesEditor({
   value,
   onSave,
@@ -443,14 +632,34 @@ function PersonalitiesEditor({
 }) {
   const [personalities, setPersonalities] = useState<PersonalityDef[]>(value)
 
-  const handleUpdatePersonality = (index: number, updates: Partial<PersonalityDef>) => {
-    const updated = [...personalities]
-    updated[index] = { ...updated[index], ...updates }
-    setPersonalities(updated)
+  const update = (index: number, updates: Partial<PersonalityDef>) => {
+    setPersonalities(prev => {
+      const next = [...prev]
+      next[index] = { ...next[index], ...updates }
+      return next
+    })
+  }
+
+  const remove = (index: number) => {
+    setPersonalities(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const add = () => {
+    const remaining = Math.max(1, 100 - personalities.reduce((s, p) => s + p.suggested_percentage, 0))
+    setPersonalities(prev => [...prev, {
+      name: 'New Archetype',
+      description: 'Describe this personality...',
+      credulity: 50,
+      influence: 50,
+      stubbornness: 50,
+      activity: 50,
+      suggested_percentage: Math.min(remaining, 10),
+      color: VIBRANT_COLORS[prev.length % VIBRANT_COLORS.length],
+    }])
   }
 
   const totalPercentage = personalities.reduce((sum, p) => sum + p.suggested_percentage, 0)
-  const isValid = Math.abs(totalPercentage - 100) <= 1
+  const isValid = Math.abs(totalPercentage - 100) <= 1 && personalities.length > 0
 
   return (
     <div style={{
@@ -460,58 +669,41 @@ function PersonalitiesEditor({
       border: '1px solid var(--accent-glow)',
       marginTop: 12,
     }}>
-      <label className="label" style={{ marginBottom: 12 }}>Adjust personality percentages (must sum to 100%)</label>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <label className="label">Personality Archetypes — edit, add, or remove</label>
+        <button
+          className="btn-secondary"
+          onClick={add}
+          style={{ padding: '6px 14px', fontSize: 12 }}
+        >
+          + Add
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
         {personalities.map((p, idx) => (
-          <div key={p.name} style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '10px 12px',
-            background: 'var(--bg-surface)',
-            borderRadius: 6,
-            border: '1px solid var(--border)',
-          }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: '50%',
-              background: p.color, flexShrink: 0,
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{p.name}</div>
-            </div>
-            <input
-              type="number"
-              value={p.suggested_percentage}
-              onChange={e => handleUpdatePersonality(idx, { suggested_percentage: parseInt(e.target.value) || 0 })}
-              min={0}
-              max={100}
-              style={{
-                width: '60px',
-                padding: '6px 8px',
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                textAlign: 'center',
-              }}
-            />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: '20px' }}>%</span>
-          </div>
+          <PersonalityRow
+            key={idx}
+            personality={p}
+            index={idx}
+            onUpdate={updates => update(idx, updates)}
+            onRemove={() => remove(idx)}
+            canRemove={personalities.length > 1}
+          />
         ))}
       </div>
 
       <div style={{
-        padding: '10px 12px',
+        padding: '8px 12px',
         background: isValid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
         borderRadius: 6,
         border: `1px solid ${isValid ? '#22c55e' : '#ef4444'}`,
-        marginBottom: 16,
+        marginBottom: 14,
         fontSize: 12,
         color: isValid ? '#22c55e' : '#ef4444',
         fontWeight: 600,
       }}>
-        Total: {totalPercentage}% {isValid ? '✓' : '(must be 100%)'}
+        Total: {totalPercentage}% {isValid ? '✓' : '— must sum to 100%'}
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>

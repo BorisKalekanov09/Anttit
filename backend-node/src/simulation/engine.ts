@@ -463,6 +463,11 @@ export class SimulationEngine {
       }
     }
 
+    // Every 10 ticks: agents may switch ideological groups if beliefs align with another group
+    if (this.tick % 10 === 0) {
+      this.checkGroupRealignment();
+    }
+
     // Every 3 ticks: agents with relationships occasionally DM each other
     if (this.tick % 3 === 0) {
       void this.performAutoDMs();
@@ -479,25 +484,21 @@ export class SimulationEngine {
     }
 
     if (this.tick % 15 === 0) {
-      const compressionTasks = Array.from(this.agents.values())
-        .filter(a => a.usedGeminiRecently && a.memory.length > 0 && canCompressMemory(a))
-        .map(async (agent) => {
-          try {
-            const episodicSummary = agent.episodicMemory
-              .slice(-5)
-              .map(e => `Tick ${e.tick}: ${e.event}`)
-              .join('; ');
-            const memoryWithEpisodic = episodicSummary 
-              ? [...agent.memory, `Key events: ${episodicSummary}`]
-              : agent.memory;
-            agent.memorySummary = await gemini.compressMemory(memoryWithEpisodic, agent.personality.name, this.config.modelName);
-          } catch {
-          }
-        });
-
-      await Promise.all(compressionTasks);
+      const timeout = (ms: number) => new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
 
       for (const agent of this.agents.values()) {
+        if (!agent.usedGeminiRecently || agent.memory.length === 0 || !canCompressMemory(agent)) continue;
+        const episodicSummary = agent.episodicMemory
+          .slice(-5)
+          .map(e => `Tick ${e.tick}: ${e.event}`)
+          .join('; ');
+        const memoryWithEpisodic = episodicSummary
+          ? [...agent.memory, `Key events: ${episodicSummary}`]
+          : agent.memory;
+        Promise.race([
+          gemini.compressMemory(memoryWithEpisodic, agent.personality.name, this.config.modelName),
+          timeout(3000),
+        ]).then(summary => { agent.memorySummary = summary; }).catch(() => {});
         agent.usedGeminiRecently = false;
       }
     }
@@ -1573,6 +1574,68 @@ export class SimulationEngine {
         if (r <= 0) { chosen = groups[i]; break; }
       }
       agent.ideologicalGroup = chosen;
+    }
+  }
+
+  /**
+   * Check whether any agent's current belief (state) aligns more strongly with
+   * another ideological group than their own, and if so, switch groups.
+   *
+   * Logic:
+   *   - For each group, compute the fraction of its members in each state.
+   *   - For each agent, see if another group is dominated (>60%) by the agent's
+   *     current state AND has a stronger alignment than the agent's own group.
+   *   - Only flexible agents (stubbornness < 60) can switch.
+   *   - A small random gate (20% chance) prevents instant mass defection.
+   */
+  private checkGroupRealignment(): void {
+    if (!this.config.ideologicalGroups?.length) return;
+
+    // Build per-group state distribution
+    const groupStateCounts = new Map<string, Map<string, number>>();
+    const groupTotals = new Map<string, number>();
+    for (const agent of this.agents.values()) {
+      const g = agent.ideologicalGroup;
+      if (!g) continue;
+      if (!groupStateCounts.has(g)) groupStateCounts.set(g, new Map());
+      const m = groupStateCounts.get(g)!;
+      m.set(agent.state, (m.get(agent.state) ?? 0) + 1);
+      groupTotals.set(g, (groupTotals.get(g) ?? 0) + 1);
+    }
+
+    // For each group compute alignment score for a given state: fraction of members in that state
+    const alignmentScore = (group: string, state: string): number => {
+      const total = groupTotals.get(group) ?? 0;
+      if (total === 0) return 0;
+      return (groupStateCounts.get(group)?.get(state) ?? 0) / total;
+    };
+
+    for (const agent of this.agents.values()) {
+      if (!agent.ideologicalGroup) continue;
+      // Only flexible agents switch groups
+      if (agent.personality.stubbornness >= 60) continue;
+      // Random gate: 20% chance per check to avoid instant mass defection
+      if (Math.random() > 0.2) continue;
+
+      const currentAlignment = alignmentScore(agent.ideologicalGroup, agent.state);
+      let bestGroup = agent.ideologicalGroup;
+      let bestAlignment = currentAlignment;
+
+      for (const g of this.config.ideologicalGroups) {
+        if (g === agent.ideologicalGroup) continue;
+        const score = alignmentScore(g, agent.state);
+        // Must be >60% to qualify and strictly better than current group
+        if (score > 0.6 && score > bestAlignment) {
+          bestAlignment = score;
+          bestGroup = g;
+        }
+      }
+
+      if (bestGroup !== agent.ideologicalGroup) {
+        const oldGroup = agent.ideologicalGroup;
+        agent.ideologicalGroup = bestGroup;
+        addMemory(agent, `Tick ${this.tick}: shifted tribal identity from ${oldGroup} to ${bestGroup} as views aligned`);
+      }
     }
   }
 

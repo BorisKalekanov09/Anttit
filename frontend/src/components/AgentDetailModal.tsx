@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, memo } from 'react'
+import toast from 'react-hot-toast'
 import type { Belief } from '../types/simulation'
 
 export interface AgentDetailData {
@@ -20,6 +21,7 @@ export interface EpisodicMemory {
   event: string
   impact: 'high' | 'low'
   description?: string
+  influence?: string  // agentId that triggered this memory
 }
 
 export interface ConnectedAgent {
@@ -39,10 +41,14 @@ interface AgentDetailModalProps {
   onClose: () => void
 }
 
-const getEmotionalStateLabel = (state: number): string => {
-  if (state > 75) return 'Euphoric'
-  if (state > 50) return 'Happy'
-  if (state > 25) return 'Anxious'
+// emotionalState from backend is -1..1; normalize to 0..100 for display
+const toEmotionalPct = (state: number): number =>
+  Math.round(((state + 1) / 2) * 100)
+
+const getEmotionalStateLabel = (pct: number): string => {
+  if (pct > 75) return 'Euphoric'
+  if (pct > 50) return 'Happy'
+  if (pct > 25) return 'Anxious'
   return 'Distressed'
 }
 
@@ -51,12 +57,41 @@ const AgentDetailModal: React.FC<AgentDetailModalProps> = ({ agentId, simId, isO
   const [agentData, setAgentData] = useState<AgentDetailData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expandedMemIdx, setExpandedMemIdx] = useState<number | null>(null)
+  const [convData, setConvData] = useState<Record<number, any[]>>({})
+  const [convLoading, setConvLoading] = useState<Record<number, boolean>>({})
+
+  const handleMemoryClick = useCallback(async (idx: number, mem: EpisodicMemory) => {
+    if (expandedMemIdx === idx) {
+      setExpandedMemIdx(null)
+      return
+    }
+    setExpandedMemIdx(idx)
+    if (!mem.influence || !agentId || !simId || convData[idx]) return
+    setConvLoading(prev => ({ ...prev, [idx]: true }))
+    try {
+      const res = await fetch(`/api/simulations/${simId}/conversations/${agentId}/${mem.influence}`)
+      if (res.ok) {
+        const json = await res.json()
+        const relevant = (json.conversations ?? []).filter((c: any) => c.tick === mem.tick || Math.abs(c.tick - mem.tick) <= 1)
+        setConvData(prev => ({ ...prev, [idx]: relevant.length ? relevant : json.conversations?.slice(-1) ?? [] }))
+      }
+    } catch (err) {
+      toast.error('Failed to load conversation')
+      console.error('Failed to load conversation:', err)
+    } finally {
+      setConvLoading(prev => ({ ...prev, [idx]: false }))
+    }
+  }, [expandedMemIdx, agentId, simId, convData])
 
   // Fetch agent details when modal opens
   useEffect(() => {
     if (!isOpen || !agentId || !simId) {
       setAgentData(null)
       setError(null)
+      setExpandedMemIdx(null)
+      setConvData({})
+      setConvLoading({})
       return
     }
 
@@ -175,15 +210,15 @@ const AgentDetailModal: React.FC<AgentDetailModalProps> = ({ agentId, simId, isO
                        </div>
                        <div style={styles.statItem}>
                          <span style={styles.statLabel}>Mood</span>
-                         <span style={styles.statValue}>{getEmotionalStateLabel(agentData.emotionalState ?? 50)}</span>
+                         <span style={styles.statValue}>{getEmotionalStateLabel(toEmotionalPct(agentData.emotionalState ?? 0))}</span>
                        </div>
                        <div style={styles.statItem}>
-                         <span style={styles.statLabel}>Emotional Energy ({agentData.emotionalState ?? 50}%)</span>
+                         <span style={styles.statLabel}>Emotional Energy ({toEmotionalPct(agentData.emotionalState ?? 0)}%)</span>
                          <div style={styles.progressBar}>
                            <div
                              style={{
                                ...styles.progressFill,
-                               width: `${Math.min(100, Math.max(0, agentData.emotionalState ?? 50))}%`,
+                               width: `${toEmotionalPct(agentData.emotionalState ?? 0)}%`,
                              }}
                            />
                          </div>
@@ -255,28 +290,73 @@ const AgentDetailModal: React.FC<AgentDetailModalProps> = ({ agentId, simId, isO
                   {agentData.recentMemory && agentData.recentMemory.length > 0 ? (
                     <div style={styles.timeline}>
                       {agentData.recentMemory.map((mem, idx) => (
-                        <div key={idx} style={styles.timelineEntry}>
-                          <div style={styles.timelineMarker} />
-                          <div style={styles.timelineBody}>
-                            <div style={styles.timelineEvent}>
-                              <strong style={styles.eventTick}>Tick {mem.tick}</strong>
-                              <span style={styles.timelineText}>{mem.event}</span>
-                            </div>
-                            {mem.description && (
-                              <p style={styles.timelineDescription}>{mem.description}</p>
-                            )}
-                            <div style={styles.timelineMeta}>
-                              <span
-                                style={{
-                                  ...styles.impactBadge,
-                                  background: mem.impact === 'high' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(107, 114, 128, 0.2)',
-                                  color: mem.impact === 'high' ? '#ef4444' : '#6b7280',
-                                }}
-                              >
-                                {mem.impact} impact
-                              </span>
+                        <div key={idx}>
+                          <div
+                            style={{
+                              ...styles.timelineEntry,
+                              cursor: mem.influence ? 'pointer' : 'default',
+                              borderColor: expandedMemIdx === idx ? 'var(--accent)' : 'var(--border)',
+                            }}
+                            onClick={() => mem.influence && handleMemoryClick(idx, mem)}
+                          >
+                            <div style={styles.timelineMarker} />
+                            <div style={styles.timelineBody}>
+                              <div style={styles.timelineEvent}>
+                                <strong style={styles.eventTick}>Tick {mem.tick}</strong>
+                                <span style={styles.timelineText}>{mem.event}</span>
+                                {mem.influence && (
+                                  <span style={{ fontSize: 11, color: 'var(--accent)', flexShrink: 0 }}>
+                                    {expandedMemIdx === idx ? '▲ hide' : '▼ talk'}
+                                  </span>
+                                )}
+                              </div>
+                              {mem.description && (
+                                <p style={styles.timelineDescription}>{mem.description}</p>
+                              )}
+                              <div style={styles.timelineMeta}>
+                                <span
+                                  style={{
+                                    ...styles.impactBadge,
+                                    background: mem.impact === 'high' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(107, 114, 128, 0.2)',
+                                    color: mem.impact === 'high' ? '#ef4444' : '#6b7280',
+                                  }}
+                                >
+                                  {mem.impact} impact
+                                </span>
+                              </div>
                             </div>
                           </div>
+
+                          {/* Conversation viewer */}
+                          {expandedMemIdx === idx && mem.influence && (
+                            <div style={styles.convPanel}>
+                              {convLoading[idx] ? (
+                                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>Loading conversation...</p>
+                              ) : convData[idx] && convData[idx].length > 0 ? (
+                                convData[idx].map((conv: any, ci: number) => (
+                                  <div key={ci} style={styles.convEntry}>
+                                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                      Tick {conv.tick} · {conv.agentAName} ↔ {conv.agentBName}
+                                    </div>
+                                    {(conv.messages ?? []).map((msg: any, mi: number) => (
+                                      <div key={mi} style={{
+                                        ...styles.convBubble,
+                                        alignSelf: msg.agentId === agentId ? 'flex-end' : 'flex-start',
+                                        background: msg.agentId === agentId ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.06)',
+                                      }}>
+                                        <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>
+                                          {msg.agentName}
+                                        </span>
+                                        <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{msg.content}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))
+                              ) : (
+                                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>No conversation found for this event</p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -772,6 +852,32 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     padding: 20,
   },
+  convPanel: {
+    margin: '4px 0 8px 0',
+    padding: 12,
+    background: 'rgba(99, 102, 241, 0.06)',
+    border: '1px solid rgba(99, 102, 241, 0.25)',
+    borderRadius: 8,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 8,
+  },
+  convEntry: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 4,
+  },
+  convBubble: {
+    maxWidth: '85%',
+    padding: '6px 10px',
+    borderRadius: 8,
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  beliefPosition: {
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+  },
 }
 
-export default AgentDetailModal
+export default memo(AgentDetailModal)

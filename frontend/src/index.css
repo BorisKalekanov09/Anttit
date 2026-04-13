@@ -487,3 +487,13 @@ input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.25); }
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ── Print / PDF styles ── */
+@media print {
+  body { background: #fff !important; color: #000 !important; }
+  header, nav, .btn-primary, .btn-secondary, .btn-icon,
+  [class*="action"], [class*="controls"] { display: none !important; }
+  .glass { box-shadow: none !important; border: 1px solid #ccc !important; background: #fff !important; }
+  .stat-card { border: 1px solid #ccc !important; background: #f9f9f9 !important; }
+  canvas { max-width: 100% !important; }
+}

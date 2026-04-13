@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage, DirectMessage, AgentGroup, GroupMessage, ConversationLog, CausalChain } from '../types/simulation'
+import type { SimMessage, SimState, InitMessage, TickMessage, AgentProfile, AnalysisMessage, DirectMessage, AgentGroup, GroupMessage, ConversationLog, CausalChain, Relationship } from '../types/simulation'
 
 // Re-export for consumers
 export type { DirectMessage, AgentGroup, GroupMessage }
 
 const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://${window.location.hostname}:3003`
+
+const MAX_RETRIES = 5
 
 interface AgentProfileCache {
   data: AgentProfile
@@ -18,13 +20,21 @@ interface AgentTimelineCache {
   timestamp: number
 }
 
+export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected'
+
 export function useSimulation(simId: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null)
   const agentProfileCacheRef = useRef<Map<string, AgentProfileCache>>(new Map())
   const agentTimelineCacheRef = useRef<Map<string, AgentTimelineCache>>(new Map())
   const apiCallCountRef = useRef(0)
   const totalTokensUsedRef = useRef(0)
-  
+  const retryCountRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // E: O(1) relationship deduplication via Map keyed by "sourceId:targetId"
+  const relMapRef = useRef<Map<string, Relationship>>(new Map())
+
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
+
   const [state, setState] = useState<SimState>({
     simId: simId ?? '',
     tick: 0,
@@ -57,73 +67,105 @@ export function useSimulation(simId: string | undefined) {
 
   useEffect(() => {
     if (!simId) return
-    const ws = new WebSocket(`${WS_BASE}/ws/${simId}`)
-    wsRef.current = ws
 
-    ws.onopen = () => {
-      setState(s => ({ ...s, running: true }))
-    }
+    let destroyed = false
+    retryCountRef.current = 0
 
-    ws.onmessage = (e) => {
-      const msg: SimMessage = JSON.parse(e.data)
-      if (msg.type === 'init') {
-        setState(s => ({ ...s, initData: msg as InitMessage }))
-      } else if (msg.type === 'tick') {
-        const tick = msg as TickMessage
-        setState(s => ({
-          ...s,
-          tick: tick.tick,
-          latestTick: tick,
-          events: [...tick.events, ...s.events].slice(0, 200),
-          history: [...s.history, tick].slice(-2000),
-          latestAdvancedMetrics: tick.advancedMetrics ?? s.latestAdvancedMetrics,
-        }))
-      } else if (msg.type === 'analysis') {
-        const analysisMsg = msg as AnalysisMessage
-        setState(s => ({ 
-          ...s, 
-          running: false, 
-          analysisReport: analysisMsg.report || null,
-        }))
-      } else if (msg.type === 'feed_update') {
-        setState(s => ({
-          ...s,
-          discussionFeed: msg.posts || s.discussionFeed,
-        }))
-      } else if (msg.type === 'api_call') {
-        setState(s => ({
-          ...s,
-          apiCallCount: (msg as any).count || s.apiCallCount,
-          totalTokensUsed: (msg as any).tokensUsed || s.totalTokensUsed,
-        }))
-      } else if (msg.type === 'relationship_update') {
-        setState(s => {
-          const updated = s.relationships.filter(
-            r => !(r.sourceAgentId === msg.data.sourceAgentId && r.targetAgentId === msg.data.targetAgentId)
-          )
-          return { ...s, relationships: [...updated, msg.data] }
-        })
-      } else if (msg.type === 'dm_update') {
-        setState(s => ({
-          ...s,
-          directMessages: [...s.directMessages, msg.dm].slice(-500),
-        }))
-      } else if (msg.type === 'group_update') {
-        setState(s => ({ ...s, groups: msg.groups }))
-      } else if (msg.type === 'conversation_update') {
-        setState(s => ({
-          ...s,
-          conversations: [...s.conversations, msg.conversation].slice(-200),
-        }))
+    const connect = () => {
+      // Clear relationship map on each (re)connect so stale rels don't persist
+      relMapRef.current.clear()
+
+      const ws = new WebSocket(`${WS_BASE}/ws/${simId}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        if (destroyed) { ws.close(); return }
+        retryCountRef.current = 0
+        setConnectionStatus('connected')
+        setState(s => ({ ...s, running: true }))
+      }
+
+      ws.onmessage = (e) => {
+        if (destroyed) return
+        const msg: SimMessage = JSON.parse(e.data)
+        if (msg.type === 'init') {
+          setState(s => ({ ...s, initData: msg as InitMessage }))
+        } else if (msg.type === 'tick') {
+          const tick = msg as TickMessage
+          setState(s => ({
+            ...s,
+            tick: tick.tick,
+            latestTick: tick,
+            events: [...tick.events, ...s.events].slice(0, 200),
+            history: [...s.history, tick].slice(-2000),
+            latestAdvancedMetrics: tick.advancedMetrics ?? s.latestAdvancedMetrics,
+          }))
+        } else if (msg.type === 'analysis') {
+          const analysisMsg = msg as AnalysisMessage
+          setState(s => ({
+            ...s,
+            running: false,
+            analysisReport: analysisMsg.report || null,
+          }))
+        } else if (msg.type === 'feed_update') {
+          setState(s => ({
+            ...s,
+            discussionFeed: msg.posts || s.discussionFeed,
+          }))
+        } else if (msg.type === 'api_call') {
+          setState(s => ({
+            ...s,
+            apiCallCount: (msg as any).count || s.apiCallCount,
+            totalTokensUsed: (msg as any).tokensUsed || s.totalTokensUsed,
+          }))
+        } else if (msg.type === 'relationship_update') {
+          // E: O(1) dedup via Map — no filter() scan
+          const key = `${msg.data.sourceAgentId}:${msg.data.targetAgentId}`
+          relMapRef.current.set(key, msg.data)
+          const relationships = Array.from(relMapRef.current.values())
+          setState(s => ({ ...s, relationships }))
+        } else if (msg.type === 'dm_update') {
+          setState(s => ({
+            ...s,
+            directMessages: [...s.directMessages, msg.dm].slice(-500),
+          }))
+        } else if (msg.type === 'group_update') {
+          setState(s => ({ ...s, groups: msg.groups }))
+        } else if (msg.type === 'conversation_update') {
+          setState(s => ({
+            ...s,
+            conversations: [...s.conversations, msg.conversation].slice(-200),
+          }))
+        }
+      }
+
+      ws.onclose = () => {
+        if (destroyed) return
+        setState(s => ({ ...s, running: false }))
+
+        if (retryCountRef.current < MAX_RETRIES) {
+          const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 16000)
+          retryCountRef.current++
+          setConnectionStatus('reconnecting')
+          retryTimerRef.current = setTimeout(() => {
+            if (!destroyed) connect()
+          }, delay)
+        } else {
+          setConnectionStatus('disconnected')
+        }
+      }
+
+      ws.onerror = () => {
+        // onclose fires right after onerror, reconnect logic is there
       }
     }
 
-    ws.onclose = () => {
-      setState(s => ({ ...s, running: false }))
-    }
+    connect()
 
     return () => {
-      ws.close()
+      destroyed = true
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+      wsRef.current?.close()
     }
   }, [simId])
 
@@ -177,17 +219,17 @@ export function useSimulation(simId: string | undefined) {
       if (cached) {
         return cached.data
       }
-      
+
       const res = await fetch(`/api/simulations/${simId}/agents/${agentId}`)
       if (!res.ok) return null
-      
+
       const profile: AgentProfile = await res.json()
       agentProfileCacheRef.current.set(agentId, {
         data: profile,
         timestamp: Date.now(),
       })
       trackApiCall()
-      
+
       return profile
     } catch (error) {
       console.error('Failed to fetch agent profile:', error)
@@ -201,10 +243,10 @@ export function useSimulation(simId: string | undefined) {
       if (cached && cached.offset === offset && cached.limit === limit) {
         return cached.data
       }
-      
+
       const res = await fetch(`/api/simulations/${simId}/agents/${agentId}/timeline?offset=${offset}&limit=${limit}`)
       if (!res.ok) return null
-      
+
       const timelineData = await res.json()
       agentTimelineCacheRef.current.set(agentId, {
         data: timelineData,
@@ -213,7 +255,7 @@ export function useSimulation(simId: string | undefined) {
         timestamp: Date.now(),
       })
       trackApiCall()
-      
+
       return timelineData
     } catch (error) {
       console.error('Failed to fetch agent timeline:', error)
@@ -229,15 +271,15 @@ export function useSimulation(simId: string | undefined) {
       })
       if (res.status === 409) return null
       if (!res.ok) return null
-      
+
       trackApiCall()
-      
+
       const updatedProfile: AgentProfile = await res.json()
       agentProfileCacheRef.current.set(agentId, {
         data: updatedProfile,
         timestamp: Date.now(),
       })
-      
+
       return updatedProfile
     } catch (error) {
       console.error('Failed to like agent profile:', error)
@@ -389,6 +431,7 @@ export function useSimulation(simId: string | undefined) {
 
   return {
     state,
+    connectionStatus,
     control,
     inject,
     snapshot,

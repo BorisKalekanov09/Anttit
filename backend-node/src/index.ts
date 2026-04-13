@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { config } from 'dotenv';
+import fs from 'fs/promises';
+import path from 'path';
 
 import themesRouter from './routes/themes.js';
 import simulationsRouter from './routes/simulations.js';
@@ -16,6 +18,7 @@ import worldBuilderRouter from './routes/worldBuilder.js';
 import configRouter from './routes/config.js';
 import dmRouter from './routes/dm.js';
 import groupsRouter from './routes/groups.js';
+import analysisRouter from './routes/analysis.js';
 import { viewerIdMiddleware } from './middleware/viewerId.js';
 import { getSimulation } from './simulation/registry.js';
 import { configManager } from './lib/config-manager.js';
@@ -45,6 +48,18 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// List all saved analysis run IDs
+app.get('/api/analyses', async (_req, res) => {
+  try {
+    const dir = path.join(process.cwd(), 'data', 'analysis');
+    const files = await fs.readdir(dir).catch(() => [] as string[]);
+    const ids = files.filter((f: string) => f.endsWith('.json')).map((f: string) => f.replace('.json', ''));
+    res.json({ ids });
+  } catch {
+    res.json({ ids: [] });
+  }
+});
+
 app.use('/api/themes', themesRouter);
 app.use('/api/simulations', simulationsRouter);
 app.use('/api/generate-personalities', personalitiesRouter);
@@ -58,6 +73,7 @@ app.use('/api/world-builder', worldBuilderRouter);
 app.use('/api/config', configRouter);
 app.use('/api/simulations/:simId/dms', dmRouter);
 app.use('/api/simulations/:simId/groups', groupsRouter);
+app.use('/api/simulations/:simId/analysis', analysisRouter);
 
 const server = createServer(app);
 
@@ -95,14 +111,29 @@ wss.on('connection', (ws: WebSocket, _request: any, simId: string, engine: any) 
   };
 
   engine.subscribe(send);
-
   ws.send(JSON.stringify(engine.getInitData()));
 
+  // Heartbeat: ping every 15s; terminate if pong not received in time
+  (ws as any).isAlive = true;
+  ws.on('pong', () => { (ws as any).isAlive = true; });
+
+  const pingInterval = setInterval(() => {
+    if (!(ws as any).isAlive) {
+      clearInterval(pingInterval);
+      ws.terminate();
+      return;
+    }
+    (ws as any).isAlive = false;
+    ws.ping();
+  }, 15000);
+
   ws.on('close', () => {
+    clearInterval(pingInterval);
     engine.unsubscribe(send);
   });
 
   ws.on('error', () => {
+    clearInterval(pingInterval);
     engine.unsubscribe(send);
   });
 });

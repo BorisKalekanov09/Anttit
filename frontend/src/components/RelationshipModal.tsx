@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
+import toast from 'react-hot-toast'
 import type { Relationship, DiscussionPost, DirectMessage } from '../types/simulation'
 
 const REL_COLORS: Record<string, string> = {
@@ -39,7 +40,7 @@ export default function RelationshipModal({
     fetch(`/api/simulations/${simId}/dms/conversation/${a}/${b}`)
       .then(r => r.ok ? r.json() : { dms: [] })
       .then(data => setDms(data.dms ?? []))
-      .catch(() => setDms([]))
+      .catch(() => { toast.error('Failed to load conversation'); setDms([]) })
       .finally(() => setDmLoading(false))
   }, [isOpen, relationship, simId])
 

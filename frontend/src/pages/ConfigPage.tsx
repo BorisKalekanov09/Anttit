@@ -32,10 +32,10 @@ export default function ConfigPage() {
       topology: worldConfig.suggested_config.topology as SimConfig['topology'],
       tick_rate: worldConfig.suggested_config.tick_rate,
       personalities: worldConfig.personality_archetypes,
-      // Include the active model for agent decision-making
       modelName: activeModels
         ? `${activeModels.agentDecision.provider}:${activeModels.agentDecision.modelId}`
         : undefined,
+      ideologicalGroups: worldConfig.ideologicalGroups,
     }
     setConfig(built)
     setStep('approval')

@@ -64,6 +64,7 @@ export interface SimConfig {
   tick_rate: number;
   personalities: PersonalityDef[];
   modelName?: string;
+  ideologicalGroups?: string[];
 }
 
 // WebSocket message types
@@ -313,6 +314,7 @@ export interface WorldConfig {
   key_concepts: string[];
   personality_archetypes: PersonalityDef[];
   initial_state_distribution: Record<string, number>;
+  ideologicalGroups?: string[];
   suggested_config: {
     theme: string;
     agent_count: number;

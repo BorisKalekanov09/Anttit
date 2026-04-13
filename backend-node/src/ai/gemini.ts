@@ -40,6 +40,22 @@ function parseModelName(modelName?: string): { provider: ProviderType; modelId: 
   return { provider: 'google', modelId: modelName };
 }
 
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, baseDelayMs = 500): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
 function stripMarkdownFences(text: string): string {
   const trimmed = text.trim();
 
@@ -191,7 +207,7 @@ Decide your action this tick. Reply with ONLY a JSON object:
   }
 }`;
 
-  const result = await model.generateContent(prompt);
+  const result = await withRetry(() => model.generateContent(prompt));
   const text = stripMarkdownFences(result.response.text());
   const parsed = JSON.parse(text);
   // Ensure reasoning_trace fields are strings (Gemini sometimes returns objects)

@@ -2,7 +2,12 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useSimulation } from '../hooks/useSimulation'
+import { useAgentInspector } from '../hooks/useAgentInspector'
+import { usePanelState } from '../hooks/usePanelState'
+import { useExperimentLab } from '../hooks/useExperimentLab'
 import AgentGraphVisualization from '../components/AgentGraphVisualization'
+import ReplayControls from '../components/ReplayControls'
+import AgentSearchPanel from '../components/AgentSearchPanel'
 import SimulationSidebar from '../components/SimulationSidebar'
 import AgentDetailDrawer from '../components/AgentDetailDrawer'
 import AgentDetailModal from '../components/AgentDetailModal'
@@ -11,7 +16,6 @@ import InfoPlaza from '../components/InfoPlaza'
 import DiscussionFeed from '../components/DiscussionFeed'
 import SystemConsole from '../components/SystemConsole'
 import GroupsPanel from '../components/GroupsPanel'
-import type { Relationship } from '../types/simulation'
 
 const PANEL_STYLE = {
   glass: {
@@ -44,165 +48,77 @@ const PANEL_STYLE = {
 export default function LivePage() {
   const { simId } = useParams<{ simId: string }>()
   const navigate = useNavigate()
-  const { state, control, snapshot, likePost, commentPost, fetchAgentProfile, fetchAgentTimeline, likeAgentProfile, fetchGroupMessages, fetchCausalChain, assignExperimentGroups, injectTargeted } = useSimulation(simId)
+  const {
+    state, connectionStatus, control, snapshot, likePost, commentPost,
+    fetchAgentProfile, fetchAgentTimeline, likeAgentProfile,
+    fetchGroupMessages, fetchCausalChain, assignExperimentGroups, injectTargeted,
+  } = useSimulation(simId)
+
+  // ── Focused hooks (replaces 26 flat useState calls) ────────────────────────
+  const inspector = useAgentInspector({
+    simId,
+    fetchAgentProfile,
+    fetchAgentTimeline,
+    likeAgentProfile,
+    fetchCausalChain,
+  })
+
+  const panels = usePanelState()
+
+  const lab = useExperimentLab({ assignExperimentGroups, injectTargeted })
+
+  // ── Remaining local state (speed slider, belief injection, resize, replay) ──
   const [speed, setSpeed] = useState(0.4)
-  const [rightPanelOpen, setRightPanelOpen] = useState(true)
+  const [replayTick, setReplayTick] = useState<number | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [highlightState, setHighlightState] = useState<string | null>(null)
+  const [beliefInput, setBeliefInput] = useState('')
+  const [beliefLoading, setBeliefLoading] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const [networkSize, setNetworkSize] = useState({ width: 480, height: 360 })
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const [agentProfile, setAgentProfile] = useState<any>(null)
-  const [agentTimeline, setAgentTimeline] = useState<any[]>([])
-  const [agentTimelineHasMore, setAgentTimelineHasMore] = useState(false)
-  const [isLoadingAgent, setIsLoadingAgent] = useState(false)
-  const [timelineOffset, setTimelineOffset] = useState(0)
-  const [agentHasLiked, setAgentHasLiked] = useState(false)
-   const [selectedRelationship, setSelectedRelationship] = useState<Relationship | null>(null)
-   const [relModalOpen, setRelModalOpen] = useState(false)
-   const [sidebarOpen, setSidebarOpen] = useState(false)
-   const [sidebarAgentProfile, setSidebarAgentProfile] = useState<any>(null)
-   const [beliefInput, setBeliefInput] = useState('')
-   const [beliefLoading, setBeliefLoading] = useState(false)
-   const [systemConsoleOpen, setSystemConsoleOpen] = useState(false)
-   const [infoPLazaOpen, setInfoPlazaOpen] = useState(false)
-   const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
-   const [modalAgentId, setModalAgentId] = useState<string | null>(null)
-   const [isModalOpen, setIsModalOpen] = useState(false)
-   const [experimentLabOpen, setExperimentLabOpen] = useState(false)
-   const [causalChain, setCausalChain] = useState<any>(null)
-   const [causalChainOpen, setCausalChainOpen] = useState(false)
-   const [treatmentFraction, setTreatmentFraction] = useState(0.5)
-   const [groupsAssigned, setGroupsAssigned] = useState(false)
-   const [targetedGroup, setTargetedGroup] = useState<'control' | 'treatment'>('treatment')
-   const [targetedFraction, setTargetedFraction] = useState(0.2)
 
   const initData = state.initData
   const latestTick = state.latestTick
+  // When scrubbing, render from history snapshot instead of live tick
+  const displayedTick = replayTick !== null ? (state.history[replayTick] ?? latestTick) : latestTick
   const stateColors = initData?.state_colors ?? {}
   const states = initData?.states ?? []
-  const totalAgents = latestTick?.total_agents ?? 0
+  const totalAgents = displayedTick?.total_agents ?? 0
 
   const handleSpeedChange = useCallback(async (v: number) => {
     setSpeed(v)
     await control('set_speed', v)
   }, [control])
 
-  const handleShowCausalChain = useCallback(async (agentId: string) => {
-    const chain = await fetchCausalChain(agentId)
-    if (chain) {
-      setCausalChain(chain)
-      setCausalChainOpen(true)
-    } else {
-      toast.error('No causal data yet for this agent')
-    }
-  }, [fetchCausalChain])
-
-  const handleSelectAgent = useCallback(async (agentId: string) => {
-    setSelectedAgentId(agentId)
-    setIsLoadingAgent(true)
-    setAgentProfile(null)
-    setAgentTimeline([])
-    setTimelineOffset(0)
-    setAgentHasLiked(false)
-    
-    try {
-      const profile = await fetchAgentProfile(agentId)
-      setAgentProfile(profile)
-      setAgentHasLiked(profile?.viewerHasLiked ?? false)
-
-      const timeline = await fetchAgentTimeline(agentId, 0)
-      if (timeline) {
-        setAgentTimeline(timeline.data ?? [])
-        setAgentTimelineHasMore(timeline.pagination?.hasMore ?? false)
-        setTimelineOffset(timeline.data?.length ?? 0)
-      }
-    } catch (e) {
-      console.error('Failed to load agent profile:', e)
-      toast.error('Failed to load agent details')
-    } finally {
-      setIsLoadingAgent(false)
-    }
-  }, [fetchAgentProfile, fetchAgentTimeline])
-
-   // Graph node click → opens AgentDetailModal
-   const handleGraphNodeClick = useCallback(async (agentId: string) => {
-     console.log("DEBUG: handleGraphNodeClick called with", agentId)
-     setModalAgentId(agentId)
-     setIsModalOpen(true)
-   }, [])
-
-  const handleLoadMoreTimeline = useCallback(async () => {
-    if (!selectedAgentId) return
-    try {
-      const timeline = await fetchAgentTimeline(selectedAgentId, timelineOffset)
-      if (timeline) {
-        setAgentTimeline(prev => [...prev, ...(timeline.data ?? [])])
-        setAgentTimelineHasMore(timeline.pagination?.hasMore ?? false)
-        setTimelineOffset(prev => prev + (timeline.data?.length ?? 0))
-      }
-    } catch (e) {
-      console.error('Failed to load more timeline:', e)
-      toast.error('Failed to load more timeline')
-    }
-  }, [selectedAgentId, timelineOffset, fetchAgentTimeline])
-
-  const handleLikeAgentProfile = useCallback(async () => {
-    if (!selectedAgentId) return
-    try {
-      const result = await likeAgentProfile(selectedAgentId)
-      if (result === null) {
-        // Already liked (409 status from backend)
-        toast('Already liked this profile')
-        return
-      }
-      setAgentHasLiked(true)
-      if (agentProfile) {
-        setAgentProfile({
-          ...agentProfile,
-          profileLikes: (agentProfile.profileLikes ?? 0) + 1,
-        })
-      }
-      toast.success('Profile liked!')
-    } catch (e) {
-      console.error('Failed to like profile:', e)
-      toast.error('Failed to like profile')
-    }
-  }, [selectedAgentId, likeAgentProfile, agentProfile])
-
   const handleAgentLikePost = useCallback(async (postId: string) => {
-    if (!selectedAgentId || !simId) return
+    if (!inspector.selectedAgentId || !simId) return
     try {
       const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/like`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: selectedAgentId }),
+        body: JSON.stringify({ agentId: inspector.selectedAgentId }),
       })
       if (!res.ok) throw new Error('Failed to like post')
       toast.success('Agent liked post!')
     } catch (e) {
-      console.error('Failed to like post:', e)
-      toast.error('Failed to like post')
+      toast.error(e instanceof Error ? e.message : 'Failed to like post')
     }
-  }, [selectedAgentId, simId])
+  }, [inspector.selectedAgentId, simId])
 
   const handleAgentCommentPost = useCallback(async (postId: string, message: string) => {
-    if (!selectedAgentId || !simId) return
+    if (!inspector.selectedAgentId || !simId) return
     try {
       const res = await fetch(`/api/simulations/${simId}/feed/posts/${postId}/comment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          author: 'Agent',
-          message,
-          agentId: selectedAgentId,
-        }),
+        body: JSON.stringify({ author: 'Agent', message, agentId: inspector.selectedAgentId }),
       })
       if (!res.ok) throw new Error('Failed to post comment')
       toast.success('Agent commented on post!')
     } catch (e) {
-      console.error('Failed to comment:', e)
-      toast.error('Failed to post comment')
+      toast.error(e instanceof Error ? e.message : 'Failed to post comment')
     }
-  }, [selectedAgentId, simId])
+  }, [inspector.selectedAgentId, simId])
 
   const handleSnapshot = async () => {
     const data = await snapshot()
@@ -237,7 +153,6 @@ export default function LivePage() {
          }
        }
        
-       const analysisKey = `sim-analysis-${simId}`
        const analysisData = {
          report: state.analysisReport || {
            summary: 'Analysis generation in progress...',
@@ -257,8 +172,18 @@ export default function LivePage() {
          stateColors: stateColors,
          advancedMetrics: state.latestAdvancedMetrics ?? null,
        }
-       
-       sessionStorage.setItem(analysisKey, JSON.stringify(analysisData))
+
+       // Persist to backend (survives page refresh); also keep sessionStorage as local fallback
+       try {
+         await fetch(`/api/simulations/${simId}/analysis`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify(analysisData),
+         })
+       } catch {
+         // If backend save fails, sessionStorage fallback below will still work
+       }
+       sessionStorage.setItem(`sim-analysis-${simId}`, JSON.stringify(analysisData))
        toast.success('Analysis saved! Redirecting...', { icon: '🔬' })
        
        setTimeout(() => {
@@ -335,14 +260,19 @@ export default function LivePage() {
           </span>
         </div>
 
-        {/* Live indicator */}
-        {state.running && !state.paused && (
+        {/* Connection status dot */}
+        <div title={connectionStatus} style={{
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+          background: connectionStatus === 'connected' ? '#22c55e' : connectionStatus === 'reconnecting' ? '#f59e0b' : '#ef4444',
+          boxShadow: connectionStatus === 'connected' ? '0 0 6px #22c55e' : connectionStatus === 'reconnecting' ? '0 0 6px #f59e0b' : '0 0 6px #ef4444',
+        }} />
+
+        {/* Live / Paused / Reconnecting indicator */}
+        {connectionStatus === 'reconnecting' && (
+          <span style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>↻ Reconnecting…</span>
+        )}
+        {connectionStatus === 'connected' && state.running && !state.paused && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: '50%', background: '#22c55e',
-              boxShadow: '0 0 8px #22c55e',
-              animation: 'glow-pulse 1.5s ease-in-out infinite',
-            }} />
             <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 600 }}>LIVE</span>
           </div>
         )}
@@ -355,8 +285,10 @@ export default function LivePage() {
         {/* Tick counter */}
         <div className="stat-card" style={{ padding: '8px 16px', flexDirection: 'row', gap: 12 }}>
           <div>
-            <div className="stat-value" style={{ fontSize: 20 }}>{state.tick}</div>
-            <div className="stat-label">Tick</div>
+            <div className="stat-value" style={{ fontSize: 20 }}>{displayedTick?.tick ?? state.tick}</div>
+            <div className="stat-label" style={{ color: replayTick !== null ? 'var(--accent)' : undefined }}>
+              {replayTick !== null ? 'Replay' : 'Tick'}
+            </div>
           </div>
           <div style={{ width: 1, background: 'var(--border)' }} />
           <div>
@@ -368,7 +300,7 @@ export default function LivePage() {
         {/* State counts */}
         <div style={{ display: 'flex', gap: 6 }}>
           {states.map(s => {
-            const count = latestTick?.state_counts[s] ?? 0
+            const count = displayedTick?.state_counts[s] ?? 0
             const pct = totalAgents > 0 ? ((count / totalAgents) * 100).toFixed(0) : '0'
             return (
               <div key={s} className="stat-card" style={{ padding: '6px 12px', gap: 3 }}>
@@ -419,7 +351,7 @@ export default function LivePage() {
           </button>
           <button
             className="btn-secondary"
-            onClick={() => setExperimentLabOpen(true)}
+            onClick={() => panels.setExperimentLabOpen(true)}
             style={{ fontSize: 12, padding: '6px 14px', borderColor: 'rgba(99,102,241,0.4)', color: 'var(--accent)' }}
             title="Experiment Lab: control vs treatment groups"
           >
@@ -427,11 +359,11 @@ export default function LivePage() {
           </button>
           <button
             className="btn-secondary"
-            onClick={() => setRightPanelOpen(!rightPanelOpen)}
+            onClick={() => panels.setRightPanelOpen(!panels.rightPanelOpen)}
             style={{ fontSize: 12, padding: '6px 14px' }}
             title="Toggle right panel"
           >
-            {rightPanelOpen ? '▶' : '◀'}
+            {panels.rightPanelOpen ? '▶' : '◀'}
           </button>
         </div>
       </header>
@@ -494,52 +426,69 @@ export default function LivePage() {
               </span>
               <button
                 className="btn-secondary"
-                onClick={() => setSidebarOpen(v => !v)}
+                onClick={() => { setSearchOpen(v => !v); if (searchOpen) setHighlightState(null) }}
+                style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, borderColor: searchOpen ? 'var(--accent)' : undefined, color: searchOpen ? 'var(--accent)' : undefined }}
+              >
+                🔍 Search
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => panels.setSidebarOpen(v => !v)}
                 style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6 }}
               >
-                {sidebarOpen ? 'Hide Inspector' : 'Inspector'}
+                {panels.sidebarOpen ? 'Hide Inspector' : 'Inspector'}
               </button>
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <AgentGraphVisualization
               initData={initData}
-              latestTick={latestTick}
+              latestTick={displayedTick}
               relationships={state.relationships}
               width={networkSize.width}
               height={networkSize.height}
-              onSelectAgent={handleGraphNodeClick}
-              onSelectRelationship={(rel) => {
-                setSelectedRelationship(rel)
-                setRelModalOpen(true)
-              }}
+              onSelectAgent={panels.openAgentModal}
+              onSelectRelationship={panels.openRelationshipModal}
+              highlightState={highlightState}
             />
+            {searchOpen && (
+              <AgentSearchPanel
+                initData={initData}
+                latestTick={displayedTick}
+                stateColors={stateColors}
+                states={states}
+                highlightState={highlightState}
+                onHighlightState={setHighlightState}
+                onSelectAgent={(id) => { panels.openAgentModal(id); }}
+                onClose={() => { setSearchOpen(false); setHighlightState(null) }}
+              />
+            )}
           </div>
         </div>
 
          {/* Right: Stacked Panels (30% width, 100% height) - Inspector + Info Plaza + Discussion Feed */}
-         {rightPanelOpen && (
+         {panels.rightPanelOpen && (
            <div className="layout-right" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
              {/* Inspector Panel (Agent / Relationship details) */}
-             {sidebarOpen && (
+             {panels.sidebarOpen && (
                <div style={{ flex: '0 0 auto', minHeight: 200, maxHeight: '40%', overflow: 'hidden' }}>
                  <SimulationSidebar
-                   selectedRelationship={selectedRelationship}
-                   selectedAgent={sidebarAgentProfile ?? null}
+                   selectedRelationship={panels.selectedRelationship}
+                   selectedAgent={null}
                    agentTimeline={[]}
-                   onClose={() => { setSidebarOpen(false); setSidebarAgentProfile(null); setSelectedRelationship(null) }}
+                   onClose={panels.closeSidebar}
                  />
                </div>
              )}
 
              {/* Info Plaza - Collapsible */}
-             {infoPLazaOpen ? (
+             {panels.infoPLazaOpen ? (
                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Info Plaza</span>
                    <button
                      className="btn-icon"
-                     onClick={() => setInfoPlazaOpen(false)}
+                     onClick={() => panels.setInfoPlazaOpen(false)}
                      style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4 }}
                    >
                      ▼
@@ -559,7 +508,7 @@ export default function LivePage() {
                <div style={{ flex: '0 0 auto' }}>
                  <button
                    className="btn-secondary"
-                   onClick={() => setInfoPlazaOpen(true)}
+                   onClick={() => panels.setInfoPlazaOpen(true)}
                    style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, width: '100%' }}
                  >
                    ▶ Info Plaza
@@ -573,12 +522,12 @@ export default function LivePage() {
                  {/* Tab header */}
                  <div style={{ ...PANEL_STYLE.header, padding: 0, gap: 0 }}>
                    <button
-                     onClick={() => setGroupsPanelOpen(false)}
+                     onClick={() => panels.setGroupsPanelOpen(false)}
                      style={{
                        flex: 1, padding: '14px 18px',
                        background: 'none', border: 'none',
-                       borderBottom: !groupsPanelOpen ? '2px solid var(--accent)' : '2px solid transparent',
-                       color: !groupsPanelOpen ? 'var(--text-secondary)' : 'var(--text-muted)',
+                       borderBottom: !panels.groupsPanelOpen ? '2px solid var(--accent)' : '2px solid transparent',
+                       color: !panels.groupsPanelOpen ? 'var(--text-secondary)' : 'var(--text-muted)',
                        fontWeight: 700, fontSize: 13, cursor: 'pointer', letterSpacing: '0.06em',
                        textTransform: 'uppercase',
                      }}
@@ -589,12 +538,12 @@ export default function LivePage() {
                      </span>
                    </button>
                    <button
-                     onClick={() => setGroupsPanelOpen(true)}
+                     onClick={() => panels.setGroupsPanelOpen(true)}
                      style={{
                        flex: 1, padding: '14px 18px',
                        background: 'none', border: 'none',
-                       borderBottom: groupsPanelOpen ? '2px solid var(--accent)' : '2px solid transparent',
-                       color: groupsPanelOpen ? 'var(--text-secondary)' : 'var(--text-muted)',
+                       borderBottom: panels.groupsPanelOpen ? '2px solid var(--accent)' : '2px solid transparent',
+                       color: panels.groupsPanelOpen ? 'var(--text-secondary)' : 'var(--text-muted)',
                        fontWeight: 700, fontSize: 13, cursor: 'pointer', letterSpacing: '0.06em',
                        textTransform: 'uppercase',
                      }}
@@ -606,8 +555,8 @@ export default function LivePage() {
                    </button>
                  </div>
 
-                 <div style={{ flex: 1, padding: groupsPanelOpen ? 0 : 12, minHeight: 0, overflow: 'hidden' }}>
-                   {groupsPanelOpen ? (
+                 <div style={{ flex: 1, padding: panels.groupsPanelOpen ? 0 : 12, minHeight: 0, overflow: 'hidden' }}>
+                   {panels.groupsPanelOpen ? (
                      <GroupsPanel
                        simId={simId ?? ''}
                        groups={state.groups ?? []}
@@ -629,7 +578,7 @@ export default function LivePage() {
                            toast.error(e instanceof Error ? e.message : 'Failed to post comment')
                          )
                        }}
-                       onOpenAgent={handleSelectAgent}
+                       onOpenAgent={inspector.selectAgent}
                      />
                    )}
                  </div>
@@ -639,9 +588,16 @@ export default function LivePage() {
          )}
        </div>
 
+       {/* Replay scrubber */}
+       <ReplayControls
+         history={state.history}
+         replayTick={replayTick}
+         onScrub={setReplayTick}
+       />
+
        {/* Bottom: System Console (collapsible) */}
        <div style={{ borderTop: '1px solid var(--border)' }}>
-         {systemConsoleOpen && (
+         {panels.systemConsoleOpen && (
            <div style={{
              flex: '0 0 220px',
              minHeight: 180,
@@ -655,7 +611,7 @@ export default function LivePage() {
                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>System Console</span>
                <button
                  className="btn-icon"
-                 onClick={() => setSystemConsoleOpen(false)}
+                 onClick={() => panels.setSystemConsoleOpen(false)}
                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4 }}
                >
                  ▼ Hide
@@ -664,11 +620,11 @@ export default function LivePage() {
              <SystemConsole history={state.history} />
            </div>
          )}
-         {!systemConsoleOpen && (
+         {!panels.systemConsoleOpen && (
            <div style={{ padding: '8px 12px' }}>
              <button
                className="btn-secondary"
-               onClick={() => setSystemConsoleOpen(true)}
+               onClick={() => panels.setSystemConsoleOpen(true)}
                style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, width: '100%' }}
              >
                ▶ Show System Console
@@ -678,32 +634,32 @@ export default function LivePage() {
         </div>
 
         <AgentDetailDrawer
-         agentId={selectedAgentId}
-         profile={agentProfile}
-         timeline={agentTimeline}
-         isLoading={isLoadingAgent}
-         timelineHasMore={agentTimelineHasMore}
-         onLoadMoreTimeline={handleLoadMoreTimeline}
-         onLikeProfile={handleLikeAgentProfile}
-         onClose={() => setSelectedAgentId(null)}
-         hasLiked={agentHasLiked}
+         agentId={inspector.selectedAgentId}
+         profile={inspector.agentProfile}
+         timeline={inspector.agentTimeline}
+         isLoading={inspector.isLoadingAgent}
+         timelineHasMore={inspector.agentTimelineHasMore}
+         onLoadMoreTimeline={inspector.loadMoreTimeline}
+         onLikeProfile={inspector.likeProfile}
+         onClose={inspector.clearSelection}
+         hasLiked={inspector.agentHasLiked}
          feedPosts={state.discussionFeed ?? []}
          onLikePost={handleAgentLikePost}
          onCommentPost={handleAgentCommentPost}
-         onShowCausalChain={handleShowCausalChain}
+         onShowCausalChain={inspector.showCausalChain}
        />
 
        <AgentDetailModal
-         agentId={modalAgentId}
+         agentId={panels.modalAgentId}
          simId={simId ?? null}
-         isOpen={isModalOpen}
-         onClose={() => setIsModalOpen(false)}
+         isOpen={panels.isModalOpen}
+         onClose={panels.closeAgentModal}
        />
 
        <RelationshipModal
-         relationship={selectedRelationship}
-         isOpen={relModalOpen}
-         onClose={() => setRelModalOpen(false)}
+         relationship={panels.selectedRelationship}
+         isOpen={panels.relModalOpen}
+         onClose={panels.closeRelationshipModal}
          discussionFeed={state.discussionFeed ?? []}
          nodeStates={latestTick?.node_states}
          stateColors={stateColors}
@@ -711,18 +667,18 @@ export default function LivePage() {
        />
 
        {/* Experiment Lab overlay */}
-       {experimentLabOpen && (
+       {panels.experimentLabOpen && (
          <div style={{
            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200,
            display: 'flex', alignItems: 'center', justifyContent: 'center',
-         }} onClick={() => setExperimentLabOpen(false)}>
+         }} onClick={() => panels.setExperimentLabOpen(false)}>
            <div style={{
              background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16,
              padding: 28, width: 480, maxWidth: '95vw',
            }} onClick={e => e.stopPropagation()}>
              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Experiment Lab</h2>
-               <button className="btn-icon" onClick={() => setExperimentLabOpen(false)}>✕</button>
+               <button className="btn-icon" onClick={() => panels.setExperimentLabOpen(false)}>✕</button>
              </div>
 
              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -736,27 +692,23 @@ export default function LivePage() {
                  </div>
                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                    <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 130 }}>
-                     Treatment: {Math.round(treatmentFraction * 100)}%
+                     Treatment: {Math.round(lab.treatmentFraction * 100)}%
                    </span>
-                   <input type="range" min={0.1} max={0.9} step={0.1} value={treatmentFraction}
-                     onChange={e => setTreatmentFraction(Number(e.target.value))}
+                   <input type="range" min={0.1} max={0.9} step={0.1} value={lab.treatmentFraction}
+                     onChange={e => lab.setTreatmentFraction(Number(e.target.value))}
                      style={{ flex: 1 }} />
                    <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 70 }}>
-                     Control: {Math.round((1 - treatmentFraction) * 100)}%
+                     Control: {Math.round((1 - lab.treatmentFraction) * 100)}%
                    </span>
                  </div>
                  <button className="btn-secondary" style={{ fontSize: 12, padding: '8px 18px', width: '100%' }}
-                   onClick={async () => {
-                     const ok = await assignExperimentGroups(treatmentFraction)
-                     if (ok) { setGroupsAssigned(true); toast.success(`Groups assigned: ${Math.round(treatmentFraction * 100)}% treatment`) }
-                     else toast.error('Failed to assign groups')
-                   }}>
-                   {groupsAssigned ? '✓ Groups Assigned — Reassign' : 'Assign Groups'}
+                   onClick={lab.assignGroups}>
+                   {lab.groupsAssigned ? '✓ Groups Assigned — Reassign' : 'Assign Groups'}
                  </button>
                </div>
 
                {/* Step 2: Inject misinformation into treatment only */}
-               <div style={{ background: 'var(--bg-surface)', borderRadius: 10, padding: 16, border: `1px solid ${groupsAssigned ? 'var(--border)' : 'transparent'}`, opacity: groupsAssigned ? 1 : 0.4 }}>
+               <div style={{ background: 'var(--bg-surface)', borderRadius: 10, padding: 16, border: `1px solid ${lab.groupsAssigned ? 'var(--border)' : 'transparent'}`, opacity: lab.groupsAssigned ? 1 : 0.4 }}>
                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
                    Step 2 — Targeted Injection
                  </div>
@@ -765,32 +717,29 @@ export default function LivePage() {
                  </div>
                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                    {(['treatment', 'control'] as const).map(g => (
-                     <button key={g} onClick={() => setTargetedGroup(g)}
+                     <button key={g} onClick={() => lab.setTargetedGroup(g)}
                        style={{ flex: 1, padding: '6px 10px', fontSize: 12, borderRadius: 6, fontWeight: 600,
-                         border: `1px solid ${targetedGroup === g ? 'var(--accent)' : 'var(--border)'}`,
-                         background: targetedGroup === g ? 'rgba(99,102,241,0.15)' : 'transparent',
-                         color: targetedGroup === g ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                         border: `1px solid ${lab.targetedGroup === g ? 'var(--accent)' : 'var(--border)'}`,
+                         background: lab.targetedGroup === g ? 'rgba(99,102,241,0.15)' : 'transparent',
+                         color: lab.targetedGroup === g ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
                        {g.charAt(0).toUpperCase() + g.slice(1)} Group
                      </button>
                    ))}
                  </div>
                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                    <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                     Fraction: {Math.round(targetedFraction * 100)}%
+                     Fraction: {Math.round(lab.targetedFraction * 100)}%
                    </span>
-                   <input type="range" min={0.05} max={1} step={0.05} value={targetedFraction}
-                     onChange={e => setTargetedFraction(Number(e.target.value))}
-                     style={{ flex: 1 }} disabled={!groupsAssigned} />
+                   <input type="range" min={0.05} max={1} step={0.05} value={lab.targetedFraction}
+                     onChange={e => lab.setTargetedFraction(Number(e.target.value))}
+                     style={{ flex: 1 }} disabled={!lab.groupsAssigned} />
                  </div>
-                 <button className="btn-secondary" disabled={!groupsAssigned}
+                 <button className="btn-secondary" disabled={!lab.groupsAssigned}
                    style={{ fontSize: 12, padding: '8px 18px', width: '100%',
-                     borderColor: groupsAssigned ? 'rgba(239,68,68,0.4)' : undefined,
-                     color: groupsAssigned ? '#ef4444' : undefined }}
-                   onClick={async () => {
-                     await injectTargeted(targetedGroup, targetedFraction)
-                     toast.success(`Injected seed into ${Math.round(targetedFraction * 100)}% of ${targetedGroup} group`)
-                   }}>
-                   Inject into {targetedGroup.charAt(0).toUpperCase() + targetedGroup.slice(1)} Group
+                     borderColor: lab.groupsAssigned ? 'rgba(239,68,68,0.4)' : undefined,
+                     color: lab.groupsAssigned ? '#ef4444' : undefined }}
+                   onClick={lab.inject}>
+                   Inject into {lab.targetedGroup.charAt(0).toUpperCase() + lab.targetedGroup.slice(1)} Group
                  </button>
                </div>
 
@@ -803,11 +752,11 @@ export default function LivePage() {
        )}
 
        {/* Causal Chain overlay */}
-       {causalChainOpen && causalChain && (
+       {inspector.causalChainOpen && inspector.causalChain && (
          <div style={{
            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200,
            display: 'flex', alignItems: 'center', justifyContent: 'center',
-         }} onClick={() => setCausalChainOpen(false)}>
+         }} onClick={() => inspector.setCausalChainOpen(false)}>
            <div style={{
              background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16,
              padding: 28, width: 520, maxWidth: '95vw', maxHeight: '80vh', overflow: 'hidden',
@@ -815,13 +764,13 @@ export default function LivePage() {
            }} onClick={e => e.stopPropagation()}>
              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                <h2 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Why did this agent change?</h2>
-               <button className="btn-icon" onClick={() => setCausalChainOpen(false)}>✕</button>
+               <button className="btn-icon" onClick={() => inspector.setCausalChainOpen(false)}>✕</button>
              </div>
-             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>{causalChain.summary}</p>
+             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>{inspector.causalChain!.summary}</p>
              <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-               {causalChain.steps.length === 0 ? (
+               {inspector.causalChain!.steps.length === 0 ? (
                  <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No recorded state changes yet.</div>
-               ) : causalChain.steps.map((step: any, i: number) => (
+               ) : inspector.causalChain!.steps.map((step: any, i: number) => (
                  <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                    {/* Timeline line */}
                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 32, flexShrink: 0 }}>
@@ -831,7 +780,7 @@ export default function LivePage() {
                        border: `2px solid ${step.impact === 'high' ? 'var(--accent)' : 'var(--border)'}`,
                        marginTop: 3,
                      }} />
-                     {i < causalChain.steps.length - 1 && (
+                     {i < inspector.causalChain!.steps.length - 1 && (
                        <div style={{ width: 1, flex: 1, background: 'var(--border)', minHeight: 16 }} />
                      )}
                    </div>

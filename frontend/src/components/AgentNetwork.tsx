@@ -139,9 +139,18 @@ export default function AgentNetwork({
       ctx.restore()
     }
 
-    draw()
-    const animationFrame = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(animationFrame)
+    let animId: number
+    let running = true
+    const loop = () => {
+      if (!running) return
+      draw()
+      animId = requestAnimationFrame(loop)
+    }
+    loop()
+    return () => {
+      running = false
+      cancelAnimationFrame(animId)
+    }
   }, [initData, latestTick, width, height, scale, offset, agents])
 
   const resetView = useCallback(() => {

@@ -54,12 +54,14 @@ router.get(
         event: e.event,
         impact: e.impact,
         description: e.description || '',
+        influence: e.influence || '',
       }));
 
       res.json({
         id: agentId,
         personality: agent.personality.name,
         state: agent.state,
+        role: agent.role,
         emotionalState: agent.emotionalState,
         memorySummary: agent.memorySummary,
         recentMemory: recentEpisodicEvents,

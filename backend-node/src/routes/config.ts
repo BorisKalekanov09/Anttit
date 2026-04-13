@@ -227,6 +227,37 @@ router.get('/active-models', (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/config/estimate-cost?modelId=X&agent_count=N&tick_count=N
+router.get('/estimate-cost', (req: Request, res: Response) => {
+  const modelId = String(req.query.modelId ?? '');
+  const agentCount = Math.max(1, Number(req.query.agent_count ?? 100));
+  const tickCount = Math.max(1, Number(req.query.tick_count ?? 100));
+
+  // Find model across all providers
+  const all = getAllProviders().flatMap(p => getModelsForProvider(p));
+  const model = all.find(m => m.id === modelId || modelId.endsWith(`:${m.id}`));
+
+  if (!model?.costPer1kTokens) {
+    res.json({ estimatedUsd: null, modelName: model?.name ?? modelId, note: 'No pricing data — likely free tier or usage-based' });
+    return;
+  }
+
+  // Engine runs 20 AI agents per tick; avg ~500 input + 150 output tokens per call
+  const AI_PER_TICK = 20;
+  const AVG_INPUT = 500;
+  const AVG_OUTPUT = 150;
+  const totalInput = tickCount * AI_PER_TICK * AVG_INPUT;
+  const totalOutput = tickCount * AI_PER_TICK * AVG_OUTPUT;
+  const estimatedUsd = (totalInput / 1000) * model.costPer1kTokens.input
+                     + (totalOutput / 1000) * model.costPer1kTokens.output;
+
+  res.json({
+    estimatedUsd: Math.round(estimatedUsd * 10000) / 10000,
+    estimatedTokens: totalInput + totalOutput,
+    modelName: model.name,
+  });
+});
+
 router.delete('/:provider', (req: Request, res: Response) => {
   const provider = req.params.provider.toLowerCase();
   configManager.deleteConfig(provider as ProviderType);
