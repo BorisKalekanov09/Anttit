@@ -13,37 +13,104 @@ export const AppShell: React.FC<AppShellProps> = ({ children, title, showBackBut
   const isSettingsPage = location.pathname === '/settings'
 
   return (
-    <div className="flex flex-col h-screen bg-[var(--bg-void)]">
-      {/* Fixed 64px Topbar */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-[var(--bg-base)] border-b border-[var(--border)] flex items-center px-6 z-50">
-        <div className="flex items-center gap-4 flex-1">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-void)' }}>
+      {/* ── Fixed 56px Topbar ── */}
+      <header style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0,
+        height: 56,
+        background: 'var(--bg-base)',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 24px',
+        zIndex: 50,
+        gap: 0,
+      }}>
+        {/* Amber top-line accent */}
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          height: 1,
+          background: 'var(--gradient-accent)',
+          opacity: 0.6,
+        }} />
+
+        {/* Left section: back + brand + page title */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
           {showBackButton && (
             <button
               onClick={() => navigate('/')}
               className="btn-icon"
               aria-label="Go back"
+              style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, flexShrink: 0 }}
             >
               ←
             </button>
           )}
-          {title && <h1 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h1>}
+
+          {/* Brand wordmark */}
+          <div
+            onClick={() => navigate('/')}
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 0, flexShrink: 0 }}
+          >
+            <span style={{
+              fontFamily: 'Syne, sans-serif',
+              fontWeight: 800,
+              fontSize: 14,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              color: 'var(--text-primary)',
+            }}>
+              ANTT
+            </span>
+            <span style={{
+              fontFamily: 'Syne, sans-serif',
+              fontWeight: 800,
+              fontSize: 14,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              color: 'var(--accent)',
+            }}>
+              IT
+            </span>
+          </div>
+
+          {/* Divider + page title (only when title is present) */}
+          {title && <div style={{ width: 1, height: 16, background: 'var(--border-bright)', flexShrink: 0 }} />}
+
+          {title && (
+            <span style={{
+              fontFamily: 'DM Mono, monospace',
+              fontSize: 10,
+              fontWeight: 400,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {title}
+            </span>
+          )}
         </div>
 
-        {!isSettingsPage && (
+        {/* Right section: action button */}
+        {!isSettingsPage ? (
           <button
             onClick={() => navigate('/settings')}
             className="btn-secondary"
-            style={{ padding: '8px 16px', fontSize: 13 }}
+            style={{ padding: '6px 16px', fontSize: 10, letterSpacing: '0.1em', flexShrink: 0 }}
             title="Configure AI providers"
           >
-            ⚙️ Settings
+            Config
           </button>
-        )}
-        {isSettingsPage && (
+        ) : (
           <button
             onClick={() => navigate('/')}
             className="btn-secondary"
-            style={{ padding: '8px 16px', fontSize: 13 }}
+            style={{ padding: '6px 16px', fontSize: 10, letterSpacing: '0.1em', flexShrink: 0 }}
             title="Back to simulator"
           >
             ← Back
@@ -51,9 +118,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children, title, showBackBut
         )}
       </header>
 
-      {/* Scrollable Content Area */}
-      <main className="flex-1 overflow-auto pt-16">
-        <div className="min-h-full">
+      {/* ── Scrollable content area ── */}
+      <main style={{ flex: 1, overflow: 'auto', paddingTop: 56 }}>
+        <div style={{ minHeight: '100%' }}>
           {children}
         </div>
       </main>

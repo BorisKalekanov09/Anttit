@@ -60,54 +60,138 @@ export default function ConfigPage() {
   }
 
   return (
-    <AppShell title="Configure Simulation">
-      <div className="page-enter" style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
-        <div
-          className="glass slide-up"
-          style={{
-            padding: '32px',
-            minHeight: 400,
-            background: 'linear-gradient(135deg, rgba(124,109,250,0.05) 0%, rgba(59,130,246,0.05) 100%)',
-            border: '1px solid var(--border-bright)',
-          }}
-        >
+    <AppShell>
+      <div className="page-enter" style={{
+        minHeight: 'calc(100vh - 56px)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '64px 24px 80px',
+      }}>
+        <div style={{ width: '100%', maxWidth: 680 }}>
+
           {step === 'builder' ? (
             <>
-              <div
-                style={{
-                  marginBottom: 24,
-                  padding: '12px 16px',
-                  borderRadius: 8,
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  fontSize: 13,
-                  color: 'var(--text-secondary)',
-                  display: 'flex',
+              {/* ── Hero ── */}
+              <div style={{ marginBottom: 48, textAlign: 'center' }}>
+                <div style={{
+                  display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 12,
-                }}
-              >
-                <span style={{ fontSize: 16 }}>💡</span>
-                <div>
-                  <strong>Tip:</strong> Want to use a different AI provider (OpenAI, Anthropic, Google, etc.)?
-                  Go to <strong>⚙️ Settings</strong> in the top right to configure your API keys and choose which models
-                  to use for world generation and agent decisions.
+                  gap: 8,
+                  marginBottom: 20,
+                  padding: '5px 14px',
+                  borderRadius: 2,
+                  background: 'rgba(232, 160, 32, 0.08)',
+                  border: '1px solid rgba(232, 160, 32, 0.2)',
+                }}>
+                  <div style={{
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: 'var(--accent)',
+                    boxShadow: '0 0 8px var(--accent-glow)',
+                  }} />
+                  <span style={{
+                    fontFamily: 'DM Mono, monospace',
+                    fontSize: 10,
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color: 'var(--accent)',
+                  }}>
+                    Multi-Agent Simulation
+                  </span>
                 </div>
+
+                <h1 style={{
+                  fontFamily: 'Syne, sans-serif',
+                  fontSize: 52,
+                  fontWeight: 800,
+                  letterSpacing: '-0.03em',
+                  lineHeight: 1.0,
+                  color: 'var(--text-primary)',
+                  marginBottom: 20,
+                }}>
+                  Design worlds.<br />
+                  <span style={{
+                    background: 'var(--gradient-accent)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text',
+                  }}>
+                    Run simulations.
+                  </span>
+                </h1>
+
+                <p style={{
+                  fontFamily: 'Syne, sans-serif',
+                  fontSize: 15,
+                  color: 'var(--text-muted)',
+                  lineHeight: 1.7,
+                  maxWidth: 440,
+                  margin: '0 auto',
+                }}>
+                  Describe any scenario in plain language. AI generates agents, personalities, topology, and belief systems — ready to launch.
+                </p>
               </div>
 
-              <WorldBuilder
-                onGenerateConfig={handleWorldBuilderConfig}
-                onSkip={() => {
-                  toast.error('Please describe a scenario to continue')
-                }}
-              />
+              {/* ── Provider tip ── */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 16px',
+                borderRadius: 3,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border)',
+                marginBottom: 32,
+              }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>💡</span>
+                <p style={{
+                  fontFamily: 'DM Mono, monospace',
+                  fontSize: 10,
+                  color: 'var(--text-muted)',
+                  lineHeight: 1.6,
+                  letterSpacing: '0.02em',
+                }}>
+                  Using a different AI provider?{' '}
+                  <span
+                    onClick={() => navigate('/settings')}
+                    style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}
+                  >
+                    Open Config
+                  </span>
+                  {' '}to set API keys and choose models.
+                </p>
+              </div>
+
+              {/* ── World builder form ── */}
+              <div style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: '32px',
+                position: 'relative',
+                overflow: 'hidden',
+              }}>
+                {/* Top amber line */}
+                <div style={{
+                  position: 'absolute',
+                  top: 0, left: 0, right: 0,
+                  height: 2,
+                  background: 'var(--gradient-accent)',
+                }} />
+                <WorldBuilder
+                  onGenerateConfig={handleWorldBuilderConfig}
+                  onSkip={() => toast.error('Please describe a scenario to continue')}
+                />
+              </div>
             </>
           ) : (
-            <GeneratedConfigApproval
-              config={config}
-              onApprove={handleApprove}
-              onEditTopic={() => setStep('builder')}
-            />
+            <div className="slide-up" style={{ width: '100%', maxWidth: 820, margin: '0 auto' }}>
+              <GeneratedConfigApproval
+                config={config}
+                onApprove={handleApprove}
+                onEditTopic={() => setStep('builder')}
+              />
+            </div>
           )}
         </div>
       </div>

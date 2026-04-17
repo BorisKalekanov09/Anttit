@@ -8,122 +8,161 @@ interface Props {
   totalTokensUsed: number
 }
 
-export default function InfoPlaza({
-  tick,
-  totalAgents,
-  events,
-  apiCallCount,
-  totalTokensUsed,
-}: Props) {
+const STAT_ITEMS = (tick: number, totalAgents: number, events: TickEvent[], apiCallCount: number, totalTokensUsed: number) => [
+  { label: 'Tick',      value: tick,                  accent: 'var(--accent)'  },
+  { label: 'Agents',    value: totalAgents,            accent: 'var(--accent)'  },
+  { label: 'Events',    value: events.length,          accent: 'var(--accent2)' },
+  { label: 'API Calls', value: apiCallCount,           accent: 'var(--accent)'  },
+  { label: 'Tokens',    value: totalTokensUsed,        accent: 'var(--accent3)' },
+]
+
+export default function InfoPlaza({ tick, totalAgents, events, apiCallCount, totalTokensUsed }: Props) {
+  const items = STAT_ITEMS(tick, totalAgents, events, apiCallCount, totalTokensUsed)
 
   return (
     <div data-testid="info-plaza" style={{
       background: 'var(--bg-card)',
       border: '1px solid var(--border)',
-      borderRadius: 16,
+      borderRadius: 6,
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden',
       height: '100%',
     }}>
-      {/* Header with title and live indicator */}
+      {/* ── Header ── */}
       <div style={{
-        padding: '12px 18px',
+        padding: '10px 16px',
         borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 12,
-        background: 'rgba(255,255,255,0.02)',
+        background: 'rgba(232, 160, 32, 0.03)',
+        flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            📊 Simulation Log
+          <span style={{
+            fontFamily: 'DM Mono, monospace',
+            fontSize: 9,
+            fontWeight: 400,
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            color: 'var(--text-muted)',
+          }}>
+            Simulation Log
           </span>
+          {/* Live indicator */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             gap: 4,
-            padding: '2px 8px',
-            background: 'rgba(34, 197, 94, 0.1)',
-            borderRadius: 4,
-            border: '1px solid rgba(34, 197, 94, 0.3)',
+            padding: '1px 6px',
+            background: 'rgba(74, 222, 128, 0.08)',
+            borderRadius: 2,
+            border: '1px solid rgba(74, 222, 128, 0.2)',
           }}>
             <div style={{
-              width: 6,
-              height: 6,
+              width: 5, height: 5,
               borderRadius: '50%',
-              background: '#22c55e',
-              animation: 'pulse 2s ease-in-out infinite',
+              background: '#4ADE80',
+              animation: 'liveBlip 2s ease-in-out infinite',
             }} />
-            <span style={{ fontSize: 10, fontWeight: 600, color: '#22c55e' }}>LIVE</span>
+            <span style={{
+              fontFamily: 'DM Mono, monospace',
+              fontSize: 8,
+              fontWeight: 500,
+              letterSpacing: '0.1em',
+              color: '#4ADE80',
+            }}>
+              LIVE
+            </span>
           </div>
+        </div>
+
+        {/* Tick counter badge */}
+        <div style={{
+          fontFamily: 'DM Mono, monospace',
+          fontSize: 10,
+          color: 'var(--accent)',
+          letterSpacing: '0.04em',
+        }}>
+          T:{tick}
         </div>
       </div>
 
-       {/* Main scrollable content */}
-       <div style={{
-         flex: 1,
-         display: 'flex',
-         flexDirection: 'column',
-         minHeight: 0,
-         overflow: 'hidden',
-         justifyContent: 'center',
-         alignItems: 'center',
-       }}>
-          {/* Stats row */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 10,
-            padding: '14px 16px',
-            borderBottom: '1px solid var(--border)',
-            background: 'rgba(255,255,255,0.01)',
-            width: '100%',
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Tick</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent)' }}>{tick}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Agents</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent)' }}>{totalAgents}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Events</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent2)' }}>{events.length}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>API Calls</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent)' }}>{apiCallCount}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Tokens</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent2)' }}>{totalTokensUsed}</div>
-            </div>
-          </div>
-
-          {/* Message */}
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 13,
-            color: 'var(--text-secondary)',
+      {/* ── Stats grid ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(5, 1fr)',
+        borderBottom: '1px solid var(--border)',
+        flexShrink: 0,
+      }}>
+        {items.map((item, i) => (
+          <div key={item.label} style={{
+            padding: '12px 8px',
             textAlign: 'center',
-            padding: '24px',
+            borderRight: i < items.length - 1 ? '1px solid var(--border)' : 'none',
+            position: 'relative',
+            overflow: 'hidden',
           }}>
-            Events are displayed in Topic Community
+            {/* Top accent line */}
+            <div style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0,
+              height: 2,
+              background: item.accent,
+              opacity: 0.6,
+            }} />
+            <div style={{
+              fontFamily: 'DM Mono, monospace',
+              fontSize: 7,
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              marginBottom: 5,
+            }}>
+              {item.label}
+            </div>
+            <div style={{
+              fontFamily: 'DM Mono, monospace',
+              fontSize: 17,
+              fontWeight: 500,
+              color: item.accent,
+              letterSpacing: '-0.02em',
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1,
+            }}>
+              {item.value.toLocaleString()}
+            </div>
           </div>
-        </div>
-
-        <style>{`
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-          }
-        `}</style>
+        ))}
       </div>
-    )
-  }
+
+      {/* ── Body message ── */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px',
+      }}>
+        <p style={{
+          fontFamily: 'DM Mono, monospace',
+          fontSize: 10,
+          color: 'var(--text-muted)',
+          textAlign: 'center',
+          letterSpacing: '0.04em',
+          lineHeight: 1.6,
+        }}>
+          Events displayed in Topic Community
+        </p>
+      </div>
+
+      <style>{`
+        @keyframes liveBlip {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.7); }
+        }
+      `}</style>
+    </div>
+  )
+}

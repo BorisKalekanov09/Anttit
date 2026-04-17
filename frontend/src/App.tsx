@@ -29,7 +29,7 @@ export default function App() {
           <Route
             path="/"
             element={
-              <AppShell title="AgentSim">
+              <AppShell title="Anttit">
                 <ErrorBoundary label="Config">
                   <ConfigPage />
                 </ErrorBoundary>

@@ -254,7 +254,7 @@ export default function LivePage() {
       }}>
         <button className="btn-icon" onClick={() => navigate('/')} title="Back">←</button>
         <div>
-          <span className="gradient-text" style={{ fontWeight: 800, fontSize: 16 }}>AgentSim</span>
+          <span className="gradient-text" style={{ fontWeight: 800, fontSize: 16 }}>Anttit</span>
           <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>
             {initData?.theme ?? 'Loading...'}
           </span>
